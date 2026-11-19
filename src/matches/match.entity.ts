@@ -34,8 +34,6 @@ export class MatchRelation {
   })
   status: MatchStatus;
 
-  @Column({ default: false })
-  isSuperLike: boolean;
 
   @Column({ type: 'varchar', length: 36, nullable: true })
   blockedByUserId: string | null;

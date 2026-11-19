@@ -19,12 +19,12 @@ async function run() {
     await db.execute('INSERT INTO video_calls (id,conversationId,callerId,receiverId,callType,status,startedAt,endedAt) VALUES (?,?,?,?,?,?,?,?)', [randomUUID(), matchId, ownId, friendId, type, 'ended', new Date('2026-11-01T10:00:00Z'), new Date(new Date('2026-11-01T10:00:00Z').getTime() + seconds * 1000)]);
   }
   const jwt = new JwtService();
-  const agentToken = jwt.sign({ sub: agentId, version: 0 }, { secret: `${process.env.JWT_SECRET.trim()}:connectlove-agent`, audience: 'agent', expiresIn: '15m' });
+  const agentToken = jwt.sign({ sub: agentId, version: 0 }, { secret: `${process.env.JWT_SECRET.trim()}:reelaxy-agent`, audience: 'agent', expiresIn: '15m' });
   const adminToken = jwt.sign({ sub: adminId, role: 'super_admin' }, { secret: process.env.JWT_SECRET.trim(), expiresIn: '15m' });
   browser = await chromium.launch({ headless: true, ...(process.env.PLAYWRIGHT_EXECUTABLE ? { executablePath: process.env.PLAYWRIGHT_EXECUTABLE } : {}) });
   const context = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
   await context.addCookies(['management_token', 'management_client_token', 'management_role'].map(name => ({ name, value: name === 'management_role' ? 'super_admin' : adminToken, domain: 'localhost', path: '/' })));
-  await context.addInitScript(token => sessionStorage.setItem('connectlove_agent_token', token), agentToken);
+  await context.addInitScript(token => sessionStorage.setItem('reelaxy_agent_token', token), agentToken);
   page = await context.newPage(); page.setDefaultTimeout(60000);
   const ready = await fetch(`http://localhost:5002/api/users?search=${encodeURIComponent(prefix)}`, { headers: { Authorization: `Bearer ${adminToken}` } });
   assert.equal(ready.status, 200, 'Local API must be ready before browser checks');

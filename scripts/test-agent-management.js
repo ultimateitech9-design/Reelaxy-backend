@@ -24,7 +24,7 @@ async function run() {
   await app.listen(0, '127.0.0.1');
   db = app.get(DataSource); const url = await app.getUrl(); const jwt = new JwtService();
   const userToken = user => jwt.sign({ sub: user.id, role: user.role }, { secret: process.env.JWT_SECRET, expiresIn: '10m' });
-  const agentToken = agent => jwt.sign({ sub: agent.id, version: 0 }, { secret: `${process.env.JWT_SECRET.trim()}:connectlove-agent`, audience: 'agent', expiresIn: '10m' });
+  const agentToken = agent => jwt.sign({ sub: agent.id, version: 0 }, { secret: `${process.env.JWT_SECRET.trim()}:reelaxy-agent`, audience: 'agent', expiresIn: '10m' });
   async function req(path, token, body, status = 200, method) {
     const res = await fetch(url + path, { method: method || (body === undefined ? 'GET' : 'POST'), headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
     const data = await res.json(); assert.equal(res.status, status, `${path}: ${res.status} ${data.message || ''}`); return data;

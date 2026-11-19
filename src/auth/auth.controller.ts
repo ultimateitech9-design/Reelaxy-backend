@@ -7,7 +7,9 @@ import {
   Req,
   Res,
   Headers,
+  UseGuards,
 } from '@nestjs/common';
+import { AuthGuard } from '@nestjs/passport';
 import { Request, Response } from 'express';
 import { AuthService } from './auth.service';
 import { TokenBlacklistService } from './token-blacklist.service';
@@ -70,6 +72,13 @@ export class AuthController {
   @HttpCode(HttpStatus.OK)
   login(@Body() dto: LoginDto, @Req() request: Request) {
     return this.authService.login(dto, this.loginContext(request));
+  }
+
+  /** Fast login: creates a guest account and signs it in, no form needed. */
+  @Post('guest')
+  @HttpCode(HttpStatus.OK)
+  guestLogin(@Req() request: Request) {
+    return this.authService.guestLogin(this.loginContext(request));
   }
 
   @Post('google')
@@ -159,10 +168,19 @@ export class AuthController {
 
     if (token) {
       await this.authService.endSession(token);
+      await this.authService.endGuestAccount(token);
       this.blacklist.blacklist(token);
     }
 
     return { message: 'Logged out successfully' };
+  }
+
+  /** Renews a member session while the app is in use (sliding expiry). */
+  @Post('refresh')
+  @HttpCode(HttpStatus.OK)
+  @UseGuards(AuthGuard('jwt'))
+  refresh(@Headers('authorization') authHeader: string | undefined) {
+    return this.authService.refreshUserToken(this.tokenFrom(authHeader));
   }
 
   @Post('activity')

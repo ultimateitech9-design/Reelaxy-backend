@@ -1,4 +1,4 @@
-# ConnectLove backend face verification worker
+# Reelaxy backend face verification worker
 
 This private Python service uses OpenCV YuNet and SFace to create normalized face embeddings from
 the authenticated user's 1-5 stored profile photos and compares them with 3-5

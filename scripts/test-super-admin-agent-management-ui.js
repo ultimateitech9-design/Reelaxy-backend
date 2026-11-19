@@ -18,7 +18,7 @@ async function run() {
   for (const [id, suffix, role, status, creator] of [[ids.admin, 'Admin', 'super_admin', 'active', null], [ids.one, 'User One', 'user', 'active', ids.owner], [ids.two, 'User Two', 'user', 'banned', ids.owner]]) await db.execute('INSERT INTO users (id,name,email,password,role,status,createdByAgentId,birthDate,city,gender) VALUES (?,?,?,?,?,?,?,?,?,?)', [id, `${prefix} ${suffix}`, `${id}@example.invalid`, hash, role, status, creator, '1995-01-01', 'Mumbai', 'female']);
   const jwt = new JwtService();
   const adminToken = jwt.sign({ sub: ids.admin }, { secret: process.env.JWT_SECRET.trim(), expiresIn: '15m' });
-  const agentToken = jwt.sign({ sub: ids.owner, version: 0 }, { secret: `${process.env.JWT_SECRET.trim()}:connectlove-agent`, audience: 'agent', expiresIn: '15m' });
+  const agentToken = jwt.sign({ sub: ids.owner, version: 0 }, { secret: `${process.env.JWT_SECRET.trim()}:reelaxy-agent`, audience: 'agent', expiresIn: '15m' });
   browser = await chromium.launch({ headless: true, ...(process.env.PLAYWRIGHT_EXECUTABLE ? { executablePath: process.env.PLAYWRIGHT_EXECUTABLE } : {}) });
   const context = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
   await context.addCookies(['management_token', 'management_client_token', 'management_role'].map(name => ({ name, value: name === 'management_role' ? 'super_admin' : adminToken, domain: 'localhost', path: '/' })));
@@ -32,7 +32,7 @@ async function run() {
   assert.equal(await dialog.getByText('Created users', { exact: true }).locator('..').locator('strong').innerText(), '2');
   assert.equal(await dialog.getByText('Active users', { exact: true }).locator('..').locator('strong').innerText(), '1');
   assert.equal(await dialog.getByText('Banned users', { exact: true }).locator('..').locator('strong').innerText(), '1');
-  await page.screenshot({ path: path.join(os.tmpdir(), 'connectlove-super-admin-agent-details.png') });
+  await page.screenshot({ path: path.join(os.tmpdir(), 'reelaxy-super-admin-agent-details.png') });
   await dialog.getByRole('link', { name: `${prefix} User One`, exact: true }).click();
   await page.waitForURL(`**/super-admin/user-360?user=${ids.one}`);
   await page.getByRole('heading', { name: `${prefix} User One`, exact: true }).waitFor();

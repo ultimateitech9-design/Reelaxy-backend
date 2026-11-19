@@ -262,8 +262,8 @@ export class MatchesService {
     return { active, sent, received, blocked };
   }
 
-  async create(senderId: string, receiverId: string, isSuperLike: boolean = false): Promise<MatchRelation> {
-    const match = this.matchesRepository.create({ senderId, receiverId, status: MatchStatus.PENDING, isSuperLike });
+  async create(senderId: string, receiverId: string): Promise<MatchRelation> {
+    const match = this.matchesRepository.create({ senderId, receiverId, status: MatchStatus.PENDING });
     return this.matchesRepository.save(match);
   }
 
@@ -276,7 +276,6 @@ export class MatchesService {
     if (!receiver) throw new NotFoundException('Profile not found.');
 
     const existing = await this.findExisting(senderId, receiverId);
-    const isSuperLike = false;
 
     if (existing?.status === MatchStatus.BLOCKED) {
       throw new BadRequestException('This profile is blocked.');
@@ -287,7 +286,6 @@ export class MatchesService {
       match.senderId = senderId;
       match.receiverId = receiverId;
       match.status = MatchStatus.DECLINED;
-      match.isSuperLike = false;
       return this.matchesRepository.save(match);
     }
 
@@ -305,14 +303,12 @@ export class MatchesService {
         // The other member may still receive the match in a locked state.
         await this.assertMatchCapacity(senderId);
         existing.status = MatchStatus.MATCHED;
-        existing.isSuperLike = existing.isSuperLike || isSuperLike;
         return this.matchesRepository.save(existing);
       }
 
       existing.senderId = senderId;
       existing.receiverId = receiverId;
       existing.status = MatchStatus.PENDING;
-      existing.isSuperLike = existing.isSuperLike || isSuperLike;
       return this.matchesRepository.save(existing);
     }
 
@@ -321,7 +317,6 @@ export class MatchesService {
         senderId,
         receiverId,
         status: MatchStatus.PENDING,
-        isSuperLike,
       }),
     );
   }

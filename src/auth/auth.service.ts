@@ -10,7 +10,7 @@ import { User } from '../users/user.entity';
 import { LoginDto } from './dto/login.dto';
 import { AuditLog } from '../platform/audit-log.entity';
 import { OAuth2Client } from 'google-auth-library';
-import { randomUUID } from 'crypto';
+import { randomInt, randomUUID } from 'crypto';
 import { RegistrationOtpService } from './registration-otp.service';
 import { VerifyRegistrationDto } from './dto/verify-registration.dto';
 import { UserEmail } from '../users/user-email.entity';
@@ -47,13 +47,38 @@ export class AuthService {
   }
 
   private signUserToken(user: User, sessionId?: string) {
-    return this.jwtService.sign({
+    const payload = {
       sub: user.id,
       email: user.email,
       plan: user.plan,
       role: user.role || 'user',
       sid: sessionId,
-    });
+    };
+    // Member sessions are renewed by the app (POST /auth/refresh) while in use,
+    // so they only lapse after a long absence. Staff tokens keep the default.
+    if ((user.role || 'user') === 'user') {
+      return this.jwtService.sign(payload, { expiresIn: process.env.USER_SESSION_EXPIRES_IN?.trim() || '30d' });
+    }
+    return this.jwtService.sign(payload);
+  }
+
+  /**
+   * Sliding session for members: swaps a still-valid token for a fresh one
+   * with the same session id. Logged-out tokens are rejected by the JWT guard.
+   */
+  async refreshUserToken(token?: string) {
+    let payload: { sub?: string; sid?: string } | null = null;
+    try {
+      payload = token ? (this.jwtService.verify(token) as { sub?: string; sid?: string }) : null;
+    } catch {
+      payload = null;
+    }
+    if (!payload?.sub) throw new UnauthorizedException('Session has expired. Please log in again.');
+    const user = await this.userRepo.findOne({ where: { id: payload.sub } });
+    if (!user || user.status !== 'active' || user.role !== 'user') {
+      throw new UnauthorizedException('This account is no longer active.');
+    }
+    return { access_token: this.signUserToken(user, payload.sid) };
   }
 
   private async loginUserForEmail(emailInput: string): Promise<User | null> {
@@ -305,6 +330,69 @@ export class AuthService {
         onboardingCompleted: user.onboardingCompleted,
       },
     };
+  }
+
+  /** Guest accounts created per IP in the last hour (simple abuse guard, per server process). */
+  private readonly guestCreations = new Map<string, number[]>();
+  private static readonly GUESTS_PER_IP_PER_HOUR = 10;
+
+  /**
+   * One-tap guest login: creates a throwaway member account with a generated
+   * name and no email/password from the user. The account lives until the
+   * guest logs out (see endGuestSession), and the name can be edited.
+   */
+  async guestLogin(context: LoginContext = {}) {
+    const ip = context.ipAddress || 'unknown';
+    const hourAgo = Date.now() - 60 * 60 * 1000;
+    const recent = (this.guestCreations.get(ip) || []).filter((at) => at > hourAgo);
+    if (recent.length >= AuthService.GUESTS_PER_IP_PER_HOUR) {
+      throw new UnauthorizedException('Too many guest sessions from this network. Please try again later.');
+    }
+    recent.push(Date.now());
+    this.guestCreations.set(ip, recent);
+    if (this.guestCreations.size > 5000) this.guestCreations.clear();
+
+    const user = await this.userRepo.save(this.userRepo.create({
+      name: `Guest-${randomInt(10000, 100000)}`,
+      // Internal placeholder only; never emailed. ".invalid" can never be a real domain.
+      email: `guest-${randomUUID()}@guest.reelaxy.invalid`,
+      password: await bcrypt.hash(randomUUID(), 10),
+      role: 'user',
+      plan: 'free',
+      planExpiresAt: null,
+      status: 'active',
+      onboardingCompleted: true,
+      isGuest: true,
+    }));
+
+    const session = await this.startSession(user, context);
+    const token = this.signUserToken(user, session.sessionId);
+    return {
+      access_token: token,
+      isGuest: true,
+      user: {
+        id: user.id,
+        name: user.name,
+        email: null,
+        plan: user.plan,
+        role: user.role,
+        onboardingCompleted: true,
+        isGuest: true,
+      },
+    };
+  }
+
+  /** On logout a guest account is closed for good: nobody can sign back in to it. */
+  async endGuestAccount(token?: string) {
+    if (!token) return;
+    let userId: string | undefined;
+    try {
+      userId = (this.jwtService.verify(token) as { sub?: string }).sub;
+    } catch {
+      return;
+    }
+    if (!userId) return;
+    await this.userRepo.update({ id: userId, isGuest: true }, { status: 'deactivated', isOnline: false });
   }
 
   async adminLogin(dto: LoginDto, context: LoginContext = {}) {

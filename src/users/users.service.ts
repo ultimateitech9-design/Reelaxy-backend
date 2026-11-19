@@ -210,6 +210,18 @@ export class UsersService {
     return users.map(user => user.id);
   }
 
+  /**
+   * Nobody is connected when the server starts, so stale "online" flags left by
+   * a crash or restart are cleared. Keeps the Online/Offline filter truthful.
+   */
+  async resetAllPresence(): Promise<void> {
+    try {
+      await this.userRepo.createQueryBuilder().update(User).set({ isOnline: false }).where('isOnline = :on', { on: true }).execute();
+    } catch {
+      // Presence is transient; never block startup on it.
+    }
+  }
+
   async updatePresence(userId: string, isOnline: boolean): Promise<void> {
     const updateData: Partial<User> = { isOnline };
     if (!isOnline) {

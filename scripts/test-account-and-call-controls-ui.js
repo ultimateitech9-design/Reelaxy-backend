@@ -122,7 +122,7 @@ export default function Page() { const [open, setOpen] = useState(true); return 
       await a.getByRole('button', { name: 'Turn camera off', exact: true }).click();
       assert.equal(await a.evaluate(() => window.__callTest.peers.at(-1).getSenders().find(sender => sender.track.kind === 'video').track.enabled), false);
       await a.getByRole('button', { name: 'Turn camera on', exact: true }).click();
-      await b.screenshot({ path: path.join(os.tmpdir(), 'connectlove-mobile-call-controls.png') });
+      await b.screenshot({ path: path.join(os.tmpdir(), 'reelaxy-mobile-call-controls.png') });
     }
     assert.equal(await b.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
     await a.getByRole('button', { name: 'End call', exact: true }).click();
@@ -142,7 +142,7 @@ export default function Page() { const [open, setOpen] = useState(true); return 
 }
 run().catch(async error => {
   console.error(error.message); process.exitCode = 1;
-  if (currentPage) { console.error('Test page:', currentPage.url()); await currentPage.screenshot({ path: path.join(os.tmpdir(), 'connectlove-call-controls-debug.png') }).catch(() => {}); }
+  if (currentPage) { console.error('Test page:', currentPage.url()); await currentPage.screenshot({ path: path.join(os.tmpdir(), 'reelaxy-call-controls-debug.png') }).catch(() => {}); }
 }).finally(async () => {
   if (browser) await browser.close();
   if (db) {

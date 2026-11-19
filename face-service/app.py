@@ -23,7 +23,7 @@ MODEL_DIR = Path(__file__).resolve().parent / "models"
 DETECTOR_MODEL = MODEL_DIR / "face_detection_yunet_2023mar.onnx"
 RECOGNIZER_MODEL = MODEL_DIR / "face_recognition_sface_2021dec.onnx"
 
-app = FastAPI(title="ConnectLove Face Verification", docs_url=None, redoc_url=None)
+app = FastAPI(title="Reelaxy Face Verification", docs_url=None, redoc_url=None)
 model_lock = threading.Lock()
 detector = None
 recognizer = None

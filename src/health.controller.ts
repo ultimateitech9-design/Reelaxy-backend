@@ -8,7 +8,7 @@ export class HealthController {
 
   @Get('health')
   health() {
-    return { status: 'ok', service: 'SoulMatch API', timestamp: new Date().toISOString() };
+    return { status: 'ok', service: 'Reelaxy API', timestamp: new Date().toISOString() };
   }
 
   @Get('maintenance-status')

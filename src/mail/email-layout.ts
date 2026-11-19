@@ -8,7 +8,7 @@
 export const SITE_URL = (process.env.PUBLIC_SITE_URL?.trim() || 'https://reelaxy.com').replace(/\/$/, '');
 export const PLAY_STORE_URL = process.env.PLAY_STORE_URL?.trim() || 'https://play.google.com/store/apps/details?id=com.reelaxy';
 // Always the public logo, so it shows even in emails sent from test setups.
-const LOGO_URL = 'https://reelaxy.com/connect-love-logo.png';
+const LOGO_URL = 'https://reelaxy.com/reelaxy-logo.png';
 
 const BRAND = '#e11d48';
 const BRAND_DARK = '#be123c';

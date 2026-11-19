@@ -1,4 +1,4 @@
-# Connect Love Backend
+# Reelaxy Backend
 
 ## Database setup on a new PC
 
@@ -15,7 +15,7 @@ DB_HOST=127.0.0.1
 DB_PORT=3306
 DB_USER=root
 DB_PASSWORD=your_mysql_password
-DB_NAME=dating_web_app
+DB_NAME=reelaxy
 ```
 
 3. Install dependencies:

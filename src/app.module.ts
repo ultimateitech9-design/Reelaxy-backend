@@ -33,7 +33,7 @@ dotenv.config();
       port: parseInt(process.env.DB_PORT || '3306', 10),
       username: process.env.DB_USER || 'root',
       password: process.env.DB_PASSWORD ?? 'root',
-      database: process.env.DB_NAME || 'dating_web_app',
+      database: process.env.DB_NAME || 'reelaxy',
       entities: [__dirname + '/**/*.entity{.ts,.js}'],
       migrations: [__dirname + '/migrations/*{.ts,.js}'],
       // Production releases must apply pending schema changes before accepting traffic.

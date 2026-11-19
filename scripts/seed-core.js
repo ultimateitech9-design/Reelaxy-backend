@@ -48,7 +48,7 @@ async function main() {
     port: Number(process.env.DB_PORT || 3306),
     user: process.env.DB_USER || 'root',
     password: process.env.DB_PASSWORD ?? 'root',
-    database: process.env.DB_NAME || 'dating_web_app',
+    database: process.env.DB_NAME || 'reelaxy',
   });
 
   const demoUserIds = demoAccountPrefixes.map((prefix) => env(`${prefix}_ID`)).filter(Boolean);
@@ -56,7 +56,7 @@ async function main() {
     await connection.execute('DELETE FROM users WHERE id = ?', [id]);
   }
   const legacyMarketingId = env('MARKETING_USER_ID') || 'marketing-1';
-  const legacyMarketingEmail = env('MARKETING_USER_EMAIL') || 'marketing@connectlove.com';
+  const legacyMarketingEmail = env('MARKETING_USER_EMAIL') || 'marketing@reelaxy.com';
   await connection.execute('DELETE FROM users WHERE id = ? OR email = ?', [legacyMarketingId, legacyMarketingEmail]);
   await connection.execute("DELETE FROM platform_roles WHERE id = 'role-marketing' OR role = 'Marketing'");
   await connection.execute("DELETE FROM payments WHERE id IN ('pay-1','pay-2','pay-3','pay-4')");

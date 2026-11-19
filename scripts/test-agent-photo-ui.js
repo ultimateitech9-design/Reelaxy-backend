@@ -17,12 +17,12 @@ async function run() {
   db = await mysql.createConnection({ host: process.env.DB_HOST, port: Number(process.env.DB_PORT || 3306), user: process.env.DB_USER, password: process.env.DB_PASSWORD, database: process.env.DB_NAME });
   await db.execute('INSERT INTO agents (id,name,email,password) VALUES (?,?,?,?)', [agentId, 'Photo Test Agent', `${agentId}@example.invalid`, 'test-only-not-a-login']);
   const jwt = new JwtService();
-  const token = jwt.sign({ sub: agentId, version: 0 }, { secret: `${process.env.JWT_SECRET.trim()}:connectlove-agent`, audience: 'agent', expiresIn: '10m' });
+  const token = jwt.sign({ sub: agentId, version: 0 }, { secret: `${process.env.JWT_SECRET.trim()}:reelaxy-agent`, audience: 'agent', expiresIn: '10m' });
   browser = await chromium.launch({ headless: true, ...(process.env.PLAYWRIGHT_EXECUTABLE ? { executablePath: process.env.PLAYWRIGHT_EXECUTABLE } : {}) });
   const page = await browser.newPage({ reducedMotion: 'reduce' });
   const errors = [];
   page.on('pageerror', error => errors.push(error.message));
-  await page.addInitScript(value => sessionStorage.setItem('connectlove_agent_token', value), token);
+  await page.addInitScript(value => sessionStorage.setItem('reelaxy_agent_token', value), token);
   await page.goto('http://localhost:3002/agent/dashboard', { waitUntil: 'networkidle', timeout: 120000 });
   await page.getByRole('button', { name: 'Create accounts', exact: true }).last().click();
   await page.waitForFunction(() => { const panel = document.querySelector('.ag-create-panel'); return panel && Math.abs(panel.getBoundingClientRect().top - 24) < 4; });

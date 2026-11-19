@@ -4,7 +4,6 @@ const { randomUUID } = require('node:crypto');
 const ds = require('../dist/data-source').default;
 const { User } = require('../dist/users/user.entity');
 const { MatchRelation } = require('../dist/matches/match.entity');
-const { FirstImpression } = require('../dist/first-impressions/first-impression.entity');
 const { DiscoveryService } = require('../dist/discovery/discovery.service');
 const sharp = require('sharp');
 const { randomFillSync } = require('node:crypto');
@@ -30,7 +29,6 @@ const { randomFillSync } = require('node:crypto');
       { label: 'matched', status: 'MATCHED' },
       { label: 'outgoing-blocked', status: 'BLOCKED' },
       { label: 'incoming-blocked', status: 'BLOCKED', incoming: true },
-      { label: 'first-impression' },
       { label: 'prefer-not', gender: 'prefer-not' },
       { label: 'large-unseen' },
       { label: 'inactive', userStatus: 'banned' },
@@ -41,7 +39,6 @@ const { randomFillSync } = require('node:crypto');
         senderId: scenario.incoming ? scenario.user.id : viewer.id,
         receiverId: scenario.incoming ? viewer.id : scenario.user.id, status: scenario.status,
       }));
-      if (scenario.label === 'first-impression') await runner.manager.save(FirstImpression, runner.manager.create(FirstImpression, { senderId: viewer.id, receiverId: scenario.user.id, content: 'Test only' }));
     }
     const service = new DiscoveryService(users, { searchUserIds: async () => null });
     const original = await sharp(randomFillSync(Buffer.alloc(512 * 512 * 3)), { raw: { width: 512, height: 512, channels: 3 } }).png().toBuffer();

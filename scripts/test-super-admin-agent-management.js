@@ -74,7 +74,7 @@ async function run() {
   const stats = (await req('/api/dashboard')).stats;
   assert.equal(Number(stats.find(stat => stat.label === 'Active Users').value), await userRepo.countBy({ status: 'active' }) + await agentRepo.countBy({ status: 'active' }));
   const otp = '123456', newPassword = 'Changed-Password-456';
-  await db.getRepository(AgentEmailChallenge).save({ email: owner.email, purpose: 'reset', codeHash: createHmac('sha256', `${process.env.JWT_SECRET.trim()}:connectlove-agent`).update(`reset:${owner.email}:${otp}`).digest('hex'), expiresAt: new Date(Date.now() + 600000), sentAt: new Date(), windowStartedAt: new Date() });
+  await db.getRepository(AgentEmailChallenge).save({ email: owner.email, purpose: 'reset', codeHash: createHmac('sha256', `${process.env.JWT_SECRET.trim()}:reelaxy-agent`).update(`reset:${owner.email}:${otp}`).digest('hex'), expiresAt: new Date(Date.now() + 600000), sentAt: new Date(), windowStartedAt: new Date() });
   await req('/agents/auth/reset-password', null, { email: owner.email, password: newPassword, otp }, 'POST', 201);
   await req('/agents/auth/login', null, { email: owner.email, password: newPassword }, 'POST', 401);
   await req(`/api/agents/${owner.id}/status`, at, { status: 'active' }, 'PATCH');

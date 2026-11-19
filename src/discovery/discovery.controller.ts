@@ -16,6 +16,7 @@ export class DiscoveryController {
       ageMin: Number(query.ageMin) || undefined, ageMax: Number(query.ageMax) || undefined,
       interestedIn: query.interestedIn, maxDistance: Number(query.maxDistance) || undefined,
       verifiedOnly: query.verifiedOnly === 'true',
+      presence: (query.presence === 'online' || query.presence === 'offline' ? query.presence : undefined),
       interests: query.interests?.split(',').filter(Boolean).slice(0, 30),
     });
   }
@@ -41,12 +42,14 @@ export class DiscoveryController {
     @Query('queue') queue?: string,
     @Query('interests') interests?: string,
     @Query('verifiedOnly') verifiedOnly?: string,
+    @Query('presence') presence?: string,
   ) {
     return this.discoveryService.getSuggestions(req.user.userId, {
       cursor,
       queue: queue === 'true',
       interests: interests?.split(',').map(value => value.trim()).filter(Boolean).slice(0, 30),
       verifiedOnly: verifiedOnly === 'true',
+      presence: presence === 'online' || presence === 'offline' ? presence : undefined,
       search,
       ageMin: ageMin ? Number(ageMin) : undefined,
       ageMax: ageMax ? Number(ageMax) : undefined,

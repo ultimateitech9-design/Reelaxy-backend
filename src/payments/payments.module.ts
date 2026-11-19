@@ -6,12 +6,11 @@ import { Coupon } from './coupon.entity';
 import { CouponsController } from './coupons.controller';
 import { PaymentsController } from './payments.controller';
 import { PaymentsService } from './payments.service';
-import { ProfileBoost } from '../boosts/boost.entity';
 import { AuthModule } from '../auth/auth.module';
 import { BillingGateway } from './billing.gateway';
 
 @Module({
-  imports: [AuthModule, TypeOrmModule.forFeature([Payment, User, Coupon, ProfileBoost])],
+  imports: [AuthModule, TypeOrmModule.forFeature([Payment, User, Coupon])],
   controllers: [PaymentsController, CouponsController],
   providers: [PaymentsService, BillingGateway],
   exports: [PaymentsService],

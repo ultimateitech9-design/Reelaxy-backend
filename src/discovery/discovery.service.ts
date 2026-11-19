@@ -7,10 +7,11 @@ import { entitlementsFor } from '../plans/plan-entitlements';
 import { MatchRelation } from '../matches/match.entity';
 import { SearchService } from '../search/search.service';
 import { distanceBetweenKm } from '../location/distance';
-import { FirstImpression } from '../first-impressions/first-impression.entity';
 
 interface DiscoveryFilters {
   compact?: boolean;
+  /** Online/offline status filter; omitted means everyone. */
+  presence?: 'online' | 'offline';
   nameSearch?: boolean;
   interests?: string[];
   verifiedOnly?: boolean;
@@ -133,6 +134,8 @@ export class DiscoveryService {
       .where('user.id != :currentUserId', { currentUserId })
       // Only show active and verified users
       .andWhere('user.status = :status', { status: 'active' })
+      // Guest accounts have no profile to show, so they never appear in Discover.
+      .andWhere('user.isGuest = 0')
       .andWhere('user.role = :role', { role: 'user' })
       .andWhere('user.birthDate IS NOT NULL')
       .andWhere('user.birthDate BETWEEN :minBirthDate AND :maxBirthDate', {
@@ -149,18 +152,6 @@ export class DiscoveryService {
     if (excludedQueueIds.length > 0) {
       query.andWhere('user.id NOT IN (:...excludedQueueIds)', { excludedQueueIds });
     }
-
-    // An intentional name lookup can find previously actioned profiles.
-    // Recommendation queues still exclude profiles already actioned.
-    if (!filters.nameSearch) query.andWhere((qb) => {
-      const sentImpression = qb.subQuery()
-        .select('sentImpression.id')
-        .from(FirstImpression, 'sentImpression')
-        .where('sentImpression.senderId = :currentUserId')
-        .andWhere('sentImpression.receiverId = user.id')
-        .getQuery();
-      return 'NOT EXISTS ' + sentImpression;
-    });
 
     const currentGender = canonicalGender(currentUser?.gender);
     const rawRequestedGender = String(filters.interestedIn || 'everyone').trim().toLowerCase();
@@ -234,6 +225,13 @@ export class DiscoveryService {
       // Verified = passed the photo/ID (KYC) check.
       query.andWhere('(user.isVerified = :verified OR user.kycMatched = :verified)', { verified: true });
     }
+    // Online = connected right now and sharing their online status. Everyone
+    // else (including people who hide their status) counts as offline.
+    if (filters.presence === 'online') {
+      query.andWhere('user.isOnline = 1 AND user.showOnlineStatus = 1');
+    } else if (filters.presence === 'offline') {
+      query.andWhere('NOT (user.isOnline = 1 AND user.showOnlineStatus = 1)');
+    }
     // "Looking for" is a real filter: only people with one of the chosen goals.
     const goalFilter = (filters.goals ?? []).map((goal) => String(goal).trim()).filter(Boolean).slice(0, 10);
     if (goalFilter.length) {
@@ -274,10 +272,6 @@ export class DiscoveryService {
           OR user.locationLatitude IS NULL OR user.locationLongitude IS NULL
           OR user.showDistance = 0 THEN 999999
           ELSE ${distanceSql} END`, 'distanceScore')
-        .addSelect(`CASE WHEN EXISTS (
-          SELECT 1 FROM profile_boosts boost
-          WHERE boost.userId = user.id AND boost.startsAt <= CURRENT_TIMESTAMP AND boost.endsAt > CURRENT_TIMESTAMP
-        ) THEN 1 ELSE 0 END`, 'boostScore')
         .addSelect('CASE WHEN user.city = :currentCity THEN 1 ELSE 0 END', 'cityScore')
         .addSelect('CASE WHEN user.religion = :currentReligion THEN 1 ELSE 0 END', 'religionScore')
         .setParameters({
@@ -291,7 +285,6 @@ export class DiscoveryService {
         .addOrderBy('relationshipGoalScore', 'ASC')
         .addOrderBy('locationMissingScore', 'ASC')
         .addOrderBy('distanceScore', 'ASC')
-        .addOrderBy('boostScore', 'DESC')
         .addOrderBy('cityScore', 'DESC')
         .addOrderBy('religionScore', 'DESC')
         .addOrderBy('user.createdAt', 'DESC')

@@ -13,7 +13,7 @@ const { AgentsService } = require('../dist/agents/agents.service');
     const makeAgent = name => runner.manager.save(Agent, runner.manager.create(Agent, { name, email: randomUUID() + '@example.invalid', password: 'test-only-hash' }));
     const agent = await makeAgent('Export test agent'), other = await makeAgent('Other agent');
     const users = runner.manager.getRepository(User);
-    const makeUser = (name, agentId) => users.save(users.create({ name, email: randomUUID() + '@example.invalid', password: 'never-export-this-hash', createdByAgentId: agentId, phone: '9302135055', birthDate: new Date('2001-01-02'), gender: 'male', city: 'gwalior', profession: 'doctor', bio: 'connect love agent user', role: 'user', status: 'active', photos: [] }));
+    const makeUser = (name, agentId) => users.save(users.create({ name, email: randomUUID() + '@example.invalid', password: 'never-export-this-hash', createdByAgentId: agentId, phone: '9302135055', birthDate: new Date('2001-01-02'), gender: 'male', city: 'gwalior', profession: 'doctor', bio: 'reelaxy agent user', role: 'user', status: 'active', photos: [] }));
     const expected = [];
     for (let index = 0; index < 7; index++) expected.push(await makeUser(index ? 'Export user ' + index : 'suraj dhakad', agent.id));
     const outsider = await makeUser('Other agent user', other.id);

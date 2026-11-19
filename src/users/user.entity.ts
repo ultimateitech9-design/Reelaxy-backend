@@ -134,6 +134,10 @@ export class User {
   @Column({ default: false })
   onboardingCompleted: boolean;
 
+  /** One-tap guest account: no email/password from the user; deactivated on logout. */
+  @Column({ default: false })
+  isGuest: boolean;
+
   // ─── Settings & Presence ──────────────────────────────────────────────────
 
   @Column({ default: false })

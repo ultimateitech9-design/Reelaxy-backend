@@ -36,7 +36,7 @@ async function run() {
   await page.getByRole('button', { name: 'Hide password', exact: true }).click();
   assert.equal(await password.getAttribute('type'), 'password');
   assert.equal(await page.locator('input[name=otp]').count(), 0);
-  await page.screenshot({ path: path.join(os.tmpdir(), 'connectlove-agent-signup-step1.png') });
+  await page.screenshot({ path: path.join(os.tmpdir(), 'reelaxy-agent-signup-step1.png') });
   await page.getByRole('button', { name: 'Continue to verification', exact: true }).click();
   await page.waitForURL('**/agent/register/verify');
   await page.getByLabel('Verification code', { exact: true }).waitFor();
@@ -59,7 +59,7 @@ async function run() {
   await page.getByLabel('Verification code', { exact: true }).fill('123456');
   await page.setViewportSize({ width: 390, height: 844 });
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
-  await page.screenshot({ path: path.join(os.tmpdir(), 'connectlove-agent-signup-step2-mobile.png') });
+  await page.screenshot({ path: path.join(os.tmpdir(), 'reelaxy-agent-signup-step2-mobile.png') });
   await page.getByRole('button', { name: 'Verify & create account', exact: true }).click();
   await page.waitForURL('**/agent/dashboard');
   assert.deepEqual(payloads.at(-1), { name: 'Updated Agent', email: 'agent@example.invalid', password: 'Updated-Password-456', otp: '123456' });

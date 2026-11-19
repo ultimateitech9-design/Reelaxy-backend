@@ -9,7 +9,7 @@ function quoteIdentifier(value) {
 }
 
 async function main() {
-  const database = process.env.DB_NAME || 'dating_web_app';
+  const database = process.env.DB_NAME || 'reelaxy';
   const connection = await mysql.createConnection({
     host: process.env.DB_HOST || 'localhost',
     port: Number(process.env.DB_PORT || 3306),

@@ -35,7 +35,10 @@ export class MessagesGateway implements OnGatewayConnection, OnGatewayDisconnect
   private readonly visitorChanged = (ownerId: string) => {
     this.server?.to('user:' + ownerId).emit('profileVisitorsChanged');
   };
-  onModuleInit() { this.usersService.profileVisitorEvents.on('changed', this.visitorChanged); }
+  onModuleInit() {
+    this.usersService.profileVisitorEvents.on('changed', this.visitorChanged);
+    void this.usersService.resetAllPresence();
+  }
   onModuleDestroy() { this.usersService.profileVisitorEvents.off('changed', this.visitorChanged); }
   @WebSocketServer()
   server: Server;
