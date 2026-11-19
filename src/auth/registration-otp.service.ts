@@ -1,0 +1,265 @@
+import { renderEmail, SITE_URL } from '../mail/email-layout';
+import {
+  ConflictException,
+  HttpException,
+  HttpStatus,
+  Injectable,
+  Logger,
+  ServiceUnavailableException,
+  UnauthorizedException,
+} from '@nestjs/common';
+import { InjectRepository } from '@nestjs/typeorm';
+import { createHmac, randomInt, timingSafeEqual } from 'crypto';
+import { Repository } from 'typeorm';
+import * as nodemailer from 'nodemailer';
+import { User } from '../users/user.entity';
+import { EmailRegistrationOtp } from './email-registration-otp.entity';
+import { UserEmail } from '../users/user-email.entity';
+
+const OTP_EXPIRY_MINUTES = 10;
+const OTP_RESEND_SECONDS = 60;
+const OTP_MAX_ATTEMPTS = 5;
+const OTP_MAX_SENDS_PER_HOUR = 5;
+
+@Injectable()
+export class RegistrationOtpService {
+  private readonly logger = new Logger(RegistrationOtpService.name);
+  private transporter: nodemailer.Transporter | null = null;
+
+  constructor(
+    @InjectRepository(EmailRegistrationOtp)
+    private readonly otpRepo: Repository<EmailRegistrationOtp>,
+    @InjectRepository(User)
+    private readonly userRepo: Repository<User>,
+    @InjectRepository(UserEmail)
+    private readonly userEmailRepo: Repository<UserEmail>,
+  ) {}
+
+  private normalizeEmail(email: string) {
+    return email.trim().toLowerCase();
+  }
+
+  private otpSecret() {
+    const secret = process.env.OTP_HASH_SECRET?.trim() || process.env.JWT_SECRET?.trim();
+    if (!secret) {
+      throw new ServiceUnavailableException('OTP service is not configured.');
+    }
+    return secret;
+  }
+
+  private hashOtp(email: string, otp: string) {
+    return createHmac('sha256', this.otpSecret()).update(`${email}:${otp}`).digest('hex');
+  }
+
+  private mailer() {
+    if (this.transporter) return this.transporter;
+
+    const host = process.env.SMTP_HOST?.trim();
+    const user = process.env.SMTP_USER?.trim();
+    const pass = process.env.SMTP_PASSWORD;
+    if (!host || !user || !pass) {
+      throw new ServiceUnavailableException('Email delivery is not configured.');
+    }
+
+    const port = Number(process.env.SMTP_PORT || 465);
+    const secure = (process.env.SMTP_SECURE || String(port === 465)).toLowerCase() === 'true';
+    this.transporter = nodemailer.createTransport({
+      host,
+      port,
+      secure,
+      auth: { user, pass },
+      connectionTimeout: 15_000,
+      greetingTimeout: 15_000,
+      socketTimeout: 20_000,
+    });
+    return this.transporter;
+  }
+
+  async request(emailInput: string) {
+    const email = this.normalizeEmail(emailInput);
+    const existingUser = await this.userRepo.findOne({ where: { email } });
+    const existingManagedEmail = existingUser ? null : await this.userEmailRepo.findOne({ where: { email } });
+    if (existingUser || existingManagedEmail) {
+      throw new ConflictException('An account with this email already exists.');
+    }
+
+    const now = new Date();
+    const current = await this.otpRepo.findOne({ where: { email } });
+    if (current) {
+      const elapsedMs = now.getTime() - current.lastSentAt.getTime();
+      if (elapsedMs < OTP_RESEND_SECONDS * 1000) {
+        const waitSeconds = Math.ceil((OTP_RESEND_SECONDS * 1000 - elapsedMs) / 1000);
+        throw new HttpException(
+          `Please wait ${waitSeconds} seconds before requesting another OTP.`,
+          HttpStatus.TOO_MANY_REQUESTS,
+        );
+      }
+    }
+
+    const oneHourMs = 60 * 60 * 1000;
+    const sameWindow = current && now.getTime() - current.sendWindowStartedAt.getTime() < oneHourMs;
+    if (sameWindow && current.sendCount >= OTP_MAX_SENDS_PER_HOUR) {
+      throw new HttpException(
+        'Too many OTP requests. Please try again in one hour.',
+        HttpStatus.TOO_MANY_REQUESTS,
+      );
+    }
+
+    const otp = randomInt(100000, 1000000).toString();
+    const challenge = this.otpRepo.create({
+      email,
+      otpHash: this.hashOtp(email, otp),
+      expiresAt: new Date(now.getTime() + OTP_EXPIRY_MINUTES * 60 * 1000),
+      attempts: 0,
+      lastSentAt: now,
+      sendWindowStartedAt: sameWindow ? current.sendWindowStartedAt : now,
+      sendCount: sameWindow ? current.sendCount + 1 : 1,
+    });
+    await this.otpRepo.save(challenge);
+
+    const fromAddress = process.env.SMTP_FROM?.trim() || process.env.SMTP_USER?.trim();
+    try {
+      await this.mailer().sendMail({
+        from: fromAddress,
+        to: email,
+        subject: `${otp} is your Reelaxy verification code`,
+        ...renderEmail({
+          preheader: `Your verification code is ${otp}`,
+          title: 'Verify your email',
+          paragraphs: ['Use this code to finish creating your Reelaxy account.'],
+          highlight: { label: 'Verification code', value: otp, large: true },
+          note: `This code expires in ${OTP_EXPIRY_MINUTES} minutes. Never share it with anyone. If you did not request it, you can ignore this email.`,
+        }),
+      });
+    } catch {
+      await this.otpRepo.delete({ email });
+      throw new ServiceUnavailableException('We could not send the OTP email. Please try again.');
+    }
+
+    return { message: 'OTP sent successfully.', expiresInSeconds: OTP_EXPIRY_MINUTES * 60 };
+  }
+
+  async requestPasswordReset(emailInput: string) {
+    const email = this.normalizeEmail(emailInput);
+    const existingUser = await this.userRepo.findOne({ where: { email } });
+    const loginAlias = existingUser ? null : await this.userEmailRepo.findOne({ where: { email, loginEnabled: true } });
+    if (!existingUser && !loginAlias) {
+      throw new UnauthorizedException('No account was found with this email address.');
+    }
+
+    const now = new Date();
+    const current = await this.otpRepo.findOne({ where: { email } });
+    if (current) {
+      const elapsedMs = now.getTime() - current.lastSentAt.getTime();
+      if (elapsedMs < OTP_RESEND_SECONDS * 1000) {
+        const waitSeconds = Math.ceil((OTP_RESEND_SECONDS * 1000 - elapsedMs) / 1000);
+        throw new HttpException(
+          `Please wait ${waitSeconds} seconds before requesting another OTP.`,
+          HttpStatus.TOO_MANY_REQUESTS,
+        );
+      }
+    }
+
+    const oneHourMs = 60 * 60 * 1000;
+    const sameWindow = current && now.getTime() - current.sendWindowStartedAt.getTime() < oneHourMs;
+    if (sameWindow && current.sendCount >= OTP_MAX_SENDS_PER_HOUR) {
+      throw new HttpException(
+        'Too many OTP requests. Please try again in one hour.',
+        HttpStatus.TOO_MANY_REQUESTS,
+      );
+    }
+
+    const otp = randomInt(100000, 1000000).toString();
+    await this.otpRepo.save(this.otpRepo.create({
+      email,
+      otpHash: this.hashOtp(email, otp),
+      expiresAt: new Date(now.getTime() + OTP_EXPIRY_MINUTES * 60 * 1000),
+      attempts: 0,
+      lastSentAt: now,
+      sendWindowStartedAt: sameWindow ? current.sendWindowStartedAt : now,
+      sendCount: sameWindow ? current.sendCount + 1 : 1,
+    }));
+
+    const fromAddress = process.env.SMTP_FROM?.trim() || process.env.SMTP_USER?.trim();
+    try {
+      await this.mailer().sendMail({
+        from: fromAddress,
+        to: email,
+        subject: `${otp} is your Reelaxy password reset code`,
+        ...renderEmail({
+          preheader: `Your password reset code is ${otp}`,
+          title: 'Reset your password',
+          paragraphs: ['Use this code to reset your Reelaxy password.'],
+          highlight: { label: 'Reset code', value: otp, large: true },
+          note: `This code expires in ${OTP_EXPIRY_MINUTES} minutes. Never share it with anyone. If you did not ask to reset your password, you can ignore this email.`,
+        }),
+      });
+    } catch {
+      await this.otpRepo.delete({ email });
+      throw new ServiceUnavailableException('We could not send the OTP email. Please try again.');
+    }
+
+    return { message: 'Password reset OTP sent successfully.', expiresInSeconds: OTP_EXPIRY_MINUTES * 60 };
+  }
+
+  async verify(emailInput: string, otp: string) {
+    const email = this.normalizeEmail(emailInput);
+    const challenge = await this.otpRepo.findOne({ where: { email } });
+    if (!challenge) {
+      throw new UnauthorizedException('Request a new OTP before continuing.');
+    }
+
+    if (challenge.expiresAt.getTime() <= Date.now()) {
+      await this.otpRepo.delete({ email });
+      throw new UnauthorizedException('This OTP has expired. Please request a new one.');
+    }
+
+    if (challenge.attempts >= OTP_MAX_ATTEMPTS) {
+      await this.otpRepo.delete({ email });
+      throw new UnauthorizedException('Too many incorrect attempts. Please request a new OTP.');
+    }
+
+    const supplied = Buffer.from(this.hashOtp(email, otp), 'hex');
+    const stored = Buffer.from(challenge.otpHash, 'hex');
+    if (supplied.length !== stored.length || !timingSafeEqual(supplied, stored)) {
+      challenge.attempts += 1;
+      if (challenge.attempts >= OTP_MAX_ATTEMPTS) {
+        await this.otpRepo.delete({ email });
+        throw new UnauthorizedException('Too many incorrect attempts. Please request a new OTP.');
+      }
+      await this.otpRepo.save(challenge);
+      throw new UnauthorizedException('The OTP is incorrect. Please try again.');
+    }
+
+    await this.otpRepo.delete({ email });
+    return email;
+  }
+
+  /** Welcome email for a new account. Never throws: signup has already succeeded. */
+  sendWelcomeEmail(email: string, name: string) {
+    void (async () => {
+      try {
+        const firstName = name.trim().split(/\s+/)[0] || 'there';
+        await this.mailer().sendMail({
+          from: process.env.SMTP_FROM?.trim() || process.env.SMTP_USER?.trim(),
+          to: email,
+          subject: `Welcome to Reelaxy, ${firstName}!`,
+          ...renderEmail({
+            preheader: 'Your account is ready. Complete your profile and start meeting people.',
+            title: 'Welcome to Reelaxy',
+            greeting: `Hi ${firstName},`,
+            paragraphs: [
+              'Your Reelaxy account is ready. We are happy to have you here.',
+              'Add a few clear photos and finish your profile so people can get to know you. Complete profiles get many more matches.',
+              'Then discover people near you, like the ones you are interested in, and start chatting when you match.',
+            ],
+            button: { label: 'Open Reelaxy', url: `${SITE_URL}/user/discover` },
+            note: 'Stay safe: never share money, OTPs or bank details with someone you met online. Report anyone who makes you feel uncomfortable.',
+          }),
+        });
+      } catch (error) {
+        this.logger.warn(`Welcome email to ${email} failed: ${String(error)}`);
+      }
+    })();
+  }
+}

@@ -1,0 +1,442 @@
+import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
+import { MatchRelation, MatchStatus } from './match.entity';
+import { Message } from '../messages/message.entity';
+import { User } from '../users/user.entity';
+import { PlanUsageService } from '../plans/plan-usage.service';
+import { activePlan, isWoman } from '../plans/plan-entitlements';
+import { dayStart } from '../plans/plan-entitlements';
+
+@Injectable()
+export class MatchesService {
+  constructor(
+    @InjectRepository(MatchRelation)
+    private matchesRepository: Repository<MatchRelation>,
+    @InjectRepository(Message)
+    private msgRepo: Repository<Message>,
+    @InjectRepository(User)
+    private userRepo: Repository<User>,
+    private readonly planUsage: PlanUsageService,
+  ) {}
+
+  private async assertMatchCapacity(userId: string) {
+    const { limits } = await this.planUsage.get(userId);
+    const count = await this.matchesRepository.createQueryBuilder('match')
+      .where('(match.senderId = :userId OR match.receiverId = :userId)', { userId })
+      .andWhere('match.status = :status', { status: MatchStatus.MATCHED })
+      .getCount();
+    if (count >= limits.matches) {
+      throw new BadRequestException(`Your plan allows ${limits.matches} matches. Upgrade your plan to match with more people.`);
+    }
+  }
+
+  private serializeUser(user?: User): any {
+    if (!user) return null;
+    return {
+      id: user.id,
+      name: user.name,
+      age: user.age,
+      // `photos[0]` is the card image. Do not duplicate the same large base64
+      // value in `avatarUrl`, which previously doubled the response payload.
+      avatarUrl: null,
+      // Match cards only display the primary photo. Returning every full-size
+      // base64 photo made the response tens of MB for users with many matches.
+      photos: user.photos?.length ? [user.photos[0]] : [],
+      bio: user.bio,
+      isOnline: user.showOnlineStatus !== false && user.status === 'active' && user.isOnline,
+      showOnlineStatus: user.showOnlineStatus,
+      status: user.status,
+    };
+  }
+
+  private matchesWithProfilesQuery() {
+    // Match cards use a stable subset so unrelated, newly-added user columns
+    // cannot break this endpoint before a production schema migration runs.
+    return this.matchesRepository
+      .createQueryBuilder('match')
+      .leftJoin('match.sender', 'sender')
+      .leftJoin('match.receiver', 'receiver')
+      .addSelect([
+        'sender.id', 'sender.name', 'sender.birthDate', 'sender.bio', 'sender.photos', 'sender.isOnline', 'sender.showOnlineStatus', 'sender.status',
+        'receiver.id', 'receiver.name', 'receiver.birthDate', 'receiver.bio', 'receiver.photos', 'receiver.isOnline', 'receiver.showOnlineStatus', 'receiver.status',
+      ]);
+  }
+
+  private async enrichMatches(matches: MatchRelation[], userId: string): Promise<any[]> {
+    if (matches.length === 0) return [];
+
+    // Fetch message metadata for every conversation in one query. The old code
+    // executed two queries per match, which made this endpoint increasingly slow.
+    const messageSummary = await this.msgRepo
+      .createQueryBuilder('message')
+      .select('message.conversationId', 'conversationId')
+      .addSelect('MAX(message.createdAt)', 'lastMessageTime')
+      .addSelect(
+        'SUM(CASE WHEN message.receiverId = :userId AND message.isRead = :isRead THEN 1 ELSE 0 END)',
+        'unreadCount',
+      )
+      .addSelect((subQuery) => subQuery
+        .select('latest.content')
+        .from(Message, 'latest')
+        .where('latest.conversationId = message.conversationId')
+        .orderBy('latest.createdAt', 'DESC')
+        .limit(1), 'lastMessage')
+      .where('message.conversationId IN (:...matchIds)', { matchIds: matches.map((match) => match.id) })
+      .setParameters({ userId, isRead: false })
+      .groupBy('message.conversationId')
+      .getRawMany<{ conversationId: string; lastMessageTime: string | Date | null; unreadCount: string; lastMessage: string | null }>();
+
+    const summaries = new Map(messageSummary.map((row) => [row.conversationId, row]));
+    const enriched = matches.map((match) => {
+      const summary = summaries.get(match.id);
+      return {
+        ...match,
+        sender: this.serializeUser(match.sender),
+        receiver: this.serializeUser(match.receiver),
+        lastMessage: summary?.lastMessage || 'No messages yet.',
+        lastMessageTime: summary?.lastMessageTime || match.createdAt,
+        unreadCount: Number(summary?.unreadCount || 0),
+      };
+    });
+    const { limits } = await this.planUsage.get(userId);
+
+    // The first matches a member unlocked remain open. Newer matches above the
+    // plan allowance are retained but locked, rather than displacing an older
+    // conversation or rejecting the match entirely.
+    // Use the complete active-match set so Matches and Messages unlock the
+    // exact same conversations even when the dashboard response is paginated.
+    const unlockedRows = limits.matches === Number.MAX_SAFE_INTEGER
+      ? enriched.filter((match) => match.status === MatchStatus.MATCHED).map((match) => ({ id: match.id }))
+      : await this.matchesRepository.createQueryBuilder('candidate')
+        .select(['candidate.id'])
+        .where('(candidate.senderId = :userId OR candidate.receiverId = :userId)', { userId })
+        .andWhere('candidate.status = :status', { status: MatchStatus.MATCHED })
+        .andWhere(`COALESCE(candidate.hiddenFromChatForUserIds, '') NOT LIKE CONCAT('%', CHAR(34), :userId, CHAR(34), '%')`)
+        .orderBy('candidate.updatedAt', 'ASC')
+        .addOrderBy('candidate.id', 'ASC')
+        .take(limits.matches)
+        .getMany();
+    const allowedMatchedIds = new Set(unlockedRows.map((match) => match.id));
+    const sorted = enriched.sort(
+      (a, b) => new Date(b.lastMessageTime).getTime() - new Date(a.lastMessageTime).getTime(),
+    );
+    return sorted.map((match) => {
+      const locked = match.status === MatchStatus.MATCHED && !allowedMatchedIds.has(match.id);
+      if (!locked) return { ...match, locked: false };
+      const hidden = { id: null, name: 'Someone', photos: [], avatarUrl: null };
+      return { ...match, sender: match.senderId === userId ? match.sender : hidden, receiver: match.receiverId === userId ? match.receiver : hidden, locked: true, lastMessage: 'Someone matched with you. Upgrade to unlock.' };
+    });
+  }
+
+  private async findExisting(senderId: string, receiverId: string): Promise<MatchRelation | null> {
+    return this.matchesRepository.findOne({
+      where: [
+        { senderId, receiverId },
+        { senderId: receiverId, receiverId: senderId },
+      ],
+      relations: ['sender', 'receiver'],
+    });
+  }
+
+  async presenceRecipients(userId: string) {
+    return this.matchesRepository.createQueryBuilder('relation')
+      .select(['relation.id', 'relation.senderId', 'relation.receiverId'])
+      .where('(relation.senderId = :userId OR relation.receiverId = :userId)', { userId })
+      .andWhere('relation.status = :status', { status: MatchStatus.MATCHED })
+      .getMany();
+  }
+
+  async findAllByStatus(userId: string, status: MatchStatus): Promise<any[]> {
+    const matches = await this.matchesWithProfilesQuery()
+      .where('(match.senderId = :userId OR match.receiverId = :userId)', { userId })
+      .andWhere('match.status = :status', { status })
+      .orderBy('match.createdAt', 'DESC')
+      .getMany();
+
+    return this.enrichMatches(matches, userId);
+  }
+
+  async findAll(userId: string): Promise<any[]> {
+    const matches = await this.matchesWithProfilesQuery()
+      .where('(match.senderId = :userId OR match.receiverId = :userId)', { userId })
+      .orderBy('match.createdAt', 'DESC')
+      .getMany();
+
+    return this.enrichMatches(matches, userId);
+  }
+
+  async findForFilter(
+    userId: string,
+    filter?: 'active' | 'sent' | 'received' | 'blocked' | 'messages',
+    limit = 12,
+    offset = 0,
+  ): Promise<any[]> {
+    const query = this.matchesWithProfilesQuery()
+      .where('(match.senderId = :userId OR match.receiverId = :userId)', { userId });
+
+    if (filter === 'messages') {
+      query
+        .andWhere(
+          '(match.status IN (:...messageStatuses) OR EXISTS (SELECT 1 FROM messages history WHERE history.conversationId = match.id))',
+          { messageStatuses: [MatchStatus.MATCHED, MatchStatus.BLOCKED] },
+        )
+        .andWhere("COALESCE(match.hiddenFromChatForUserIds, '') NOT LIKE CONCAT('%', CHAR(34), :userId, CHAR(34), '%')");
+    } else if (filter === 'active') {
+      query
+        .andWhere('match.status = :status', { status: MatchStatus.MATCHED })
+        .andWhere("COALESCE(match.hiddenFromChatForUserIds, '') NOT LIKE CONCAT('%', CHAR(34), :userId, CHAR(34), '%')");
+    } else if (filter === 'sent') {
+      query.andWhere('match.status = :status AND match.senderId = :userId', { status: MatchStatus.PENDING, userId });
+    } else if (filter === 'received') {
+      query.andWhere('match.status = :status AND match.receiverId = :userId', { status: MatchStatus.PENDING, userId });
+    } else if (filter === 'blocked') {
+      query.andWhere(
+        'match.status = :status AND (match.blockedByUserId = :userId OR (match.blockedByUserId IS NULL AND match.senderId = :userId))',
+        { status: MatchStatus.BLOCKED, userId },
+      );
+    } else {
+      query.andWhere('match.status IN (:...statuses)', {
+        statuses: [MatchStatus.MATCHED, MatchStatus.PENDING, MatchStatus.BLOCKED],
+      });
+    }
+
+    // Each dashboard tab renders a small page only. Loading every related
+    // profile (and its photo) made accounts with many requests unnecessarily
+    // slow to open.
+    const matches = await query
+      .orderBy('match.createdAt', 'DESC')
+      .take(Math.min(Math.max(limit, 1), 100))
+      .skip(Math.max(offset, 0))
+      .getMany();
+    const enriched = await this.enrichMatches(matches, userId);
+    if (filter !== 'received') return enriched;
+    const { user, limits } = await this.planUsage.get(userId);
+    if (activePlan(user) !== 'free' || isWoman(user)) return enriched;
+
+    // Free members can still see and accept incoming likes until their two
+    // active-match allowance is actually used.  Previously every received
+    // like was blurred for a free member, which made the two included matches
+    // impossible to create. Once both slots are occupied, keep later likes
+    // visible in the count but lock their profile/action until an upgrade (or
+    // an active match is removed).
+    const activeMatchCount = await this.matchesRepository.count({
+      where: [
+        { senderId: userId, status: MatchStatus.MATCHED },
+        { receiverId: userId, status: MatchStatus.MATCHED },
+      ],
+    });
+    if (activeMatchCount < limits.matches) return enriched;
+
+    return enriched.map((match) => ({
+      ...match,
+      sender: match.senderId === userId ? match.sender : { id: null, name: 'Someone', photos: [], avatarUrl: null },
+      receiver: match.receiverId === userId ? match.receiver : { id: null, name: 'Someone', photos: [], avatarUrl: null },
+      locked: true,
+    }));
+  }
+
+  async getSummary(userId: string) {
+    const count = (status: MatchStatus, field?: 'senderId' | 'receiverId') => {
+      const where: any = { status };
+      if (field) where[field] = userId;
+      if (field) return this.matchesRepository.count({ where });
+      const query = this.matchesRepository.createQueryBuilder('match')
+        .where('(match.senderId = :userId OR match.receiverId = :userId)', { userId })
+        .andWhere('match.status = :status', { status });
+      if (status === MatchStatus.MATCHED) {
+        query.andWhere(`COALESCE(match.hiddenFromChatForUserIds, '') NOT LIKE CONCAT('%', CHAR(34), :userId, CHAR(34), '%')`);
+      }
+      return query.getCount();
+    };
+
+    const [active, sent, received, blocked] = await Promise.all([
+      count(MatchStatus.MATCHED),
+      count(MatchStatus.PENDING, 'senderId'),
+      count(MatchStatus.PENDING, 'receiverId'),
+      this.matchesRepository.createQueryBuilder('match')
+        .where('match.status = :status', { status: MatchStatus.BLOCKED })
+        .andWhere('(match.blockedByUserId = :userId OR (match.blockedByUserId IS NULL AND match.senderId = :userId))', { userId })
+        .getCount(),
+    ]);
+    return { active, sent, received, blocked };
+  }
+
+  async create(senderId: string, receiverId: string, isSuperLike: boolean = false): Promise<MatchRelation> {
+    const match = this.matchesRepository.create({ senderId, receiverId, status: MatchStatus.PENDING, isSuperLike });
+    return this.matchesRepository.save(match);
+  }
+
+  async swipe(senderId: string, receiverId: string, action: 'like' | 'pass'): Promise<MatchRelation> {
+    if (action !== 'like' && action !== 'pass') throw new BadRequestException('Unsupported action.');
+    if (!receiverId) throw new BadRequestException('receiverId is required.');
+    if (senderId === receiverId) throw new BadRequestException('You cannot swipe on your own profile.');
+
+    const receiver = await this.userRepo.findOne({ where: { id: receiverId } });
+    if (!receiver) throw new NotFoundException('Profile not found.');
+
+    const existing = await this.findExisting(senderId, receiverId);
+    const isSuperLike = false;
+
+    if (existing?.status === MatchStatus.BLOCKED) {
+      throw new BadRequestException('This profile is blocked.');
+    }
+
+    if (action === 'pass') {
+      const match = existing || this.matchesRepository.create({ senderId, receiverId });
+      match.senderId = senderId;
+      match.receiverId = receiverId;
+      match.status = MatchStatus.DECLINED;
+      match.isSuperLike = false;
+      return this.matchesRepository.save(match);
+    }
+
+    // Retrying the same outgoing like (for example after login or a double
+    // click) is idempotent and must not consume another daily like.
+    if (existing?.status === MatchStatus.MATCHED) return existing;
+    if (existing?.status === MatchStatus.PENDING && existing.senderId === senderId) return existing;
+
+    // Likes are free and unlimited on Reelaxy.
+
+    if (existing) {
+      const isIncomingLike = existing.senderId === receiverId && existing.receiverId === senderId;
+      if (existing.status === MatchStatus.PENDING && isIncomingLike) {
+        // Only the member performing the matching action must have capacity.
+        // The other member may still receive the match in a locked state.
+        await this.assertMatchCapacity(senderId);
+        existing.status = MatchStatus.MATCHED;
+        existing.isSuperLike = existing.isSuperLike || isSuperLike;
+        return this.matchesRepository.save(existing);
+      }
+
+      existing.senderId = senderId;
+      existing.receiverId = receiverId;
+      existing.status = MatchStatus.PENDING;
+      existing.isSuperLike = existing.isSuperLike || isSuperLike;
+      return this.matchesRepository.save(existing);
+    }
+
+    return this.matchesRepository.save(
+      this.matchesRepository.create({
+        senderId,
+        receiverId,
+        status: MatchStatus.PENDING,
+        isSuperLike,
+      }),
+    );
+  }
+
+  async updateStatus(id: string, status: MatchStatus): Promise<MatchRelation | null> {
+    const match = await this.matchesRepository.findOne({ where: { id } });
+    if (match) {
+      match.status = status;
+      return this.matchesRepository.save(match);
+    }
+    return null;
+  }
+
+  async blockMatch(id: string, blockerUserId: string): Promise<MatchRelation> {
+    const match = await this.matchesRepository.findOne({ where: { id } });
+    if (!match) throw new NotFoundException('Match not found.');
+    if (match.senderId !== blockerUserId && match.receiverId !== blockerUserId) {
+      throw new ForbiddenException('You are not part of this match.');
+    }
+    if (match.status === MatchStatus.BLOCKED) {
+      if (match.blockedByUserId === blockerUserId || (!match.blockedByUserId && match.senderId === blockerUserId)) return match;
+      throw new ForbiddenException('This user has blocked this conversation.');
+    }
+
+    match.statusBeforeBlock = match.status;
+    match.blockedByUserId = blockerUserId;
+    match.status = MatchStatus.BLOCKED;
+    return this.matchesRepository.save(match);
+  }
+
+  async unblockMatch(id: string, userId: string): Promise<MatchRelation> {
+    const match = await this.matchesRepository.findOne({ where: { id } });
+    if (!match) throw new NotFoundException('Match not found.');
+    if (match.senderId !== userId && match.receiverId !== userId) {
+      throw new ForbiddenException('You are not part of this match.');
+    }
+    if (match.status !== MatchStatus.BLOCKED) return match;
+
+    const blockerId = match.blockedByUserId || match.senderId;
+    if (blockerId !== userId) throw new ForbiddenException('Only the user who blocked this conversation can unblock it.');
+
+    match.status = match.statusBeforeBlock || MatchStatus.MATCHED;
+    match.blockedByUserId = null;
+    match.statusBeforeBlock = null;
+    return this.matchesRepository.save(match);
+  }
+  async respond(id: string, action: 'accept' | 'decline', userId?: string): Promise<MatchRelation> {
+    const match = await this.matchesRepository.findOne({ where: { id } });
+    if (!match) throw new NotFoundException('Match request not found.');
+    if (userId && match.receiverId !== userId) {
+      throw new ForbiddenException('Only the receiver can respond to this match request.');
+    }
+
+    if (action === 'accept') {
+      // The receiver is the actor here. If the other member has exhausted
+      // their allowance, enrichMatches keeps this new match blurred for them.
+      if (userId) await this.assertMatchCapacity(userId);
+      match.status = MatchStatus.MATCHED;
+      return this.matchesRepository.save(match);
+    }
+
+    match.status = MatchStatus.DECLINED;
+    return this.matchesRepository.save(match);
+  }
+
+  async delete(id: string, userId?: string): Promise<{ deleted: boolean }> {
+    const match = await this.matchesRepository.findOne({ where: { id } });
+    if (match) {
+      if (userId && match.senderId !== userId && match.receiverId !== userId) {
+        throw new ForbiddenException('You are not part of this match.');
+      }
+      await this.matchesRepository.remove(match);
+    }
+    return { deleted: true };
+  }
+
+  async deletePendingRequest(id: string, senderId: string): Promise<{ deleted: boolean }> {
+    const match = await this.matchesRepository.findOne({ where: { id } });
+    if (!match) throw new NotFoundException('Pending request not found.');
+    if (match.senderId !== senderId) {
+      throw new ForbiddenException('Only the sender can delete this request.');
+    }
+    if (match.status !== MatchStatus.PENDING) {
+      throw new BadRequestException('Only pending requests can be deleted.');
+    }
+
+    await this.matchesRepository.remove(match);
+    return { deleted: true };
+  }
+
+  /**
+   * Opens a free chat with any profile, no mutual like needed. The pair's
+   * relation becomes MATCHED (the app's conversation record) so it shows up
+   * in Messages for both users. Returns the conversation id.
+   */
+  async startChat(userId: string, otherUserId: string): Promise<{ id: string }> {
+    if (!otherUserId || otherUserId === userId) throw new BadRequestException('Choose another profile to chat with.');
+    const other = await this.userRepo.findOne({ where: { id: otherUserId, role: 'user' }, select: ['id'] });
+    if (!other) throw new NotFoundException('Profile not found.');
+
+    const existing = await this.findExisting(userId, otherUserId);
+    if (existing?.status === MatchStatus.BLOCKED) throw new ForbiddenException('This chat is blocked.');
+
+    const relation = existing || this.matchesRepository.create({ senderId: userId, receiverId: otherUserId });
+    if (relation.status !== MatchStatus.MATCHED) relation.status = MatchStatus.MATCHED;
+    if (relation.hiddenFromChatForUserIds) {
+      try {
+        const hidden = (JSON.parse(relation.hiddenFromChatForUserIds) as unknown[]).map(String).filter((id) => id !== userId);
+        relation.hiddenFromChatForUserIds = hidden.length ? JSON.stringify(hidden) : null;
+      } catch {
+        relation.hiddenFromChatForUserIds = null;
+      }
+    }
+    const saved = await this.matchesRepository.save(relation);
+    return { id: saved.id };
+  }
+
+}
