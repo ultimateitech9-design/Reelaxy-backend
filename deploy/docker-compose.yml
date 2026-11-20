@@ -103,6 +103,7 @@ services:
       - /opt/reelaxy/nginx/htpasswd:/etc/nginx/htpasswd:ro
       - /opt/reelaxy/certbot/www:/var/www/certbot:ro
       - /opt/reelaxy/certbot/conf:/etc/letsencrypt:ro
+      - /opt/reelaxy/status:/usr/share/nginx/status:ro
     depends_on: [frontend, backend, phpmyadmin]
 
 volumes:

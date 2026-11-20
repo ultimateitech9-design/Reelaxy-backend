@@ -48,3 +48,10 @@ $C logs -f backend             # logs
 $C exec backend npm run db:seed:core   # staff accounts + roles (first install)
 ./setup-ssl.sh --renew         # certificate renewal (also in root's crontab)
 ```
+
+## Deploy status
+
+Every deploy records its progress in `/opt/reelaxy/status/deploy.json` (via `deploy/status/status.py`).
+nginx serves the page at **https://reelaxy.com/deploy-status** (and the raw data at `/deploy-status.json`).
+It shows the live commit of the website and API, a running deploy's step (pull → build → start), failures,
+live health checks and the last 25 deploys. Only commit hashes, subjects and times are published.

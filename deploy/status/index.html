@@ -1,0 +1,169 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>Reelaxy Deploy Status</title>
+<style>
+  :root { --bg:#08080f; --card:#11111b; --line:rgba(255,255,255,.08); --text:#f4f4f8; --mute:rgba(255,255,255,.55);
+          --ok:#34d399; --run:#a78bfa; --bad:#fb7185; --grad:linear-gradient(90deg,#8b5cf6,#ec4899,#f97316); }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font:14px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif; }
+  body::before { content:""; position:fixed; inset:0; pointer-events:none;
+    background:radial-gradient(600px 300px at 15% -5%,rgba(139,92,246,.22),transparent),radial-gradient(500px 260px at 95% 0%,rgba(236,72,153,.16),transparent); }
+  .wrap { position:relative; max-width:880px; margin:0 auto; padding:28px 16px 48px; }
+  header { display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; }
+  .brand { font-weight:600; font-size:16px; text-decoration:none; color:var(--text); }
+  .brand span { background:var(--grad); -webkit-background-clip:text; background-clip:text; color:transparent; }
+  .upd { color:var(--mute); font-size:12px; }
+  .banner { margin-top:18px; display:flex; align-items:center; gap:10px; padding:12px 14px; border:1px solid var(--line); border-radius:14px; background:var(--card); font-weight:600; }
+  .dot { width:9px; height:9px; border-radius:50%; flex:none; background:var(--mute); }
+  .ok .dot, .dot.ok { background:var(--ok); box-shadow:0 0 0 4px rgba(52,211,153,.15); }
+  .run .dot, .dot.run { background:var(--run); animation:p 1.2s infinite; }
+  .bad .dot, .dot.bad { background:var(--bad); box-shadow:0 0 0 4px rgba(251,113,133,.15); }
+  @keyframes p { 50% { box-shadow:0 0 0 6px rgba(167,139,250,.25); } }
+  .grid { margin-top:14px; display:grid; gap:12px; grid-template-columns:repeat(auto-fit,minmax(260px,1fr)); }
+  .card { border:1px solid var(--line); border-radius:14px; background:var(--card); padding:14px; }
+  .row { display:flex; align-items:center; justify-content:space-between; gap:8px; }
+  h2 { margin:0; font-size:13px; font-weight:600; }
+  h3 { margin:22px 0 8px; font-size:12px; font-weight:600; color:var(--mute); text-transform:uppercase; letter-spacing:.06em; }
+  .pill { font-size:11px; font-weight:600; padding:2px 8px; border-radius:999px; border:1px solid var(--line); display:inline-flex; align-items:center; gap:6px; }
+  .pill.ok { color:var(--ok); } .pill.run { color:var(--run); } .pill.bad { color:var(--bad); }
+  .kv { margin-top:10px; display:grid; grid-template-columns:auto 1fr; gap:4px 12px; font-size:12px; }
+  .kv dt { color:var(--mute); } .kv dd { margin:0; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  code { font:12px ui-monospace,SFMono-Regular,Menlo,monospace; color:#f0abfc; }
+  .steps { margin-top:10px; display:flex; gap:4px; }
+  .steps i { flex:1; height:4px; border-radius:4px; background:rgba(255,255,255,.08); }
+  .steps i.done { background:var(--grad); } .steps i.now { background:var(--run); animation:p 1.2s infinite; }
+  .checks { display:grid; gap:8px; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); }
+  .check { display:flex; align-items:center; gap:8px; border:1px solid var(--line); border-radius:12px; background:var(--card); padding:10px 12px; font-size:12px; }
+  .check b { font-weight:600; } .check span { margin-left:auto; color:var(--mute); }
+  table { width:100%; border-collapse:collapse; font-size:12px; }
+  .tbl { border:1px solid var(--line); border-radius:14px; background:var(--card); overflow-x:auto; }
+  th, td { text-align:left; padding:8px 12px; border-bottom:1px solid var(--line); white-space:nowrap; }
+  th { color:var(--mute); font-weight:500; } tr:last-child td { border-bottom:0; }
+  td.msg { max-width:280px; overflow:hidden; text-overflow:ellipsis; }
+  .empty { padding:18px; text-align:center; color:var(--mute); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <a class="brand" href="/">Reel<span>axy</span> · deploy status</a>
+    <div class="upd" id="upd">Loading…</div>
+  </header>
+
+  <div class="banner" id="banner"><i class="dot"></i><span>Checking…</span></div>
+
+  <div class="grid" id="services"></div>
+
+  <h3>Live checks</h3>
+  <div class="checks" id="checks"></div>
+
+  <h3>Recent deploys</h3>
+  <div class="tbl"><table>
+    <thead><tr><th>Service</th><th>Result</th><th>Commit</th><th>Message</th><th>Finished</th><th>Took</th></tr></thead>
+    <tbody id="history"><tr><td colspan="6" class="empty">No deploys recorded yet.</td></tr></tbody>
+  </table></div>
+</div>
+
+<script>
+const NAMES = { frontend: "Website", backend: "API & database" };
+const STEPS = ["pull", "build", "start", "done"];
+const CHECKS = [
+  { name: "Website", url: "/", mode: "same-origin" },
+  { name: "API", url: "https://api.reelaxy.com/api/health" },
+];
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;" }[c]));
+const ago = (iso) => {
+  if (!iso) return "—";
+  const s = Math.max(0, (Date.now() - new Date(iso).getTime()) / 1000);
+  if (s < 60) return Math.round(s) + "s ago";
+  if (s < 3600) return Math.round(s / 60) + "m ago";
+  if (s < 86400) return Math.round(s / 3600) + "h ago";
+  return Math.round(s / 86400) + "d ago";
+};
+const when = (iso) => iso ? new Date(iso).toLocaleString("en-IN", { dateStyle: "medium", timeStyle: "short" }) : "—";
+const dur = (n) => n == null ? "—" : n >= 60 ? Math.floor(n / 60) + "m " + (n % 60) + "s" : n + "s";
+const cls = (state) => state === "success" ? "ok" : state === "deploying" ? "run" : state === "failed" ? "bad" : "";
+const label = (state) => ({ success: "Live", deploying: "Deploying", failed: "Failed" }[state] || "Unknown");
+
+function serviceCard(key, svc) {
+  const live = svc.live || {};
+  const deploying = svc.state === "deploying";
+  const idx = STEPS.indexOf(svc.step);
+  const steps = deploying
+    ? `<div class="steps">${STEPS.map((_, i) => `<i class="${i < idx ? "done" : i === idx ? "now" : ""}"></i>`).join("")}</div>`
+    : "";
+  const pending = deploying && svc.pending
+    ? `<dt>Deploying</dt><dd><code>${esc(svc.pending.sha)}</code> ${esc(svc.pending.subject)}</dd><dt>Step</dt><dd>${esc(svc.step)} · started ${ago(svc.startedAt)}</dd>`
+    : svc.state === "failed"
+      ? `<dt>Failed at</dt><dd>${esc(svc.step)} · ${ago(svc.finishedAt)}</dd>`
+      : "";
+  return `<div class="card">
+    <div class="row"><h2>${esc(NAMES[key] || key)}</h2><span class="pill ${cls(svc.state)}"><i class="dot ${cls(svc.state)}"></i>${label(svc.state)}</span></div>
+    ${steps}
+    <dl class="kv">
+      ${pending}
+      <dt>Live commit</dt><dd>${live.sha ? `<code>${esc(live.sha)}</code> ${esc(live.subject)}` : "—"}</dd>
+      <dt>Live since</dt><dd>${svc.liveSince ? `${when(svc.liveSince)} (${ago(svc.liveSince)})` : "—"}</dd>
+      <dt>Last build</dt><dd>${dur(svc.seconds)}</dd>
+    </dl>
+  </div>`;
+}
+
+async function loadStatus() {
+  try {
+    const res = await fetch("/deploy-status.json", { cache: "no-store" });
+    if (!res.ok) throw new Error(res.status);
+    const data = await res.json();
+    const services = data.services || {};
+    const keys = ["frontend", "backend"].filter((k) => services[k]);
+    document.getElementById("services").innerHTML = keys.length
+      ? keys.map((k) => serviceCard(k, services[k])).join("")
+      : `<div class="card empty">No deploys recorded yet — the next push will show up here.</div>`;
+
+    const states = keys.map((k) => services[k].state);
+    const banner = document.getElementById("banner");
+    const [c, text] = states.includes("deploying") ? ["run", "Deploy in progress…"]
+      : states.includes("failed") ? ["bad", "Last deploy failed — the previous version is still running"]
+      : ["ok", "All services deployed"];
+    banner.className = "banner " + c;
+    banner.innerHTML = `<i class="dot"></i><span>${text}</span>`;
+
+    const rows = (data.history || []).map((h) => `<tr>
+      <td>${esc(NAMES[h.service] || h.service)}</td>
+      <td><span class="pill ${cls(h.state)}">${label(h.state)}</span></td>
+      <td><code>${esc(h.commit?.sha)}</code></td>
+      <td class="msg" title="${esc(h.commit?.subject)}">${esc(h.commit?.subject)}</td>
+      <td>${when(h.finishedAt)}</td>
+      <td>${dur(h.seconds)}</td></tr>`).join("");
+    if (rows) document.getElementById("history").innerHTML = rows;
+    document.getElementById("upd").textContent = "Updated " + ago(data.updatedAt) + " · refreshes every 5s";
+  } catch {
+    document.getElementById("services").innerHTML = `<div class="card empty">No deploys recorded yet — the next push will show up here.</div>`;
+    document.getElementById("banner").className = "banner";
+    document.getElementById("banner").innerHTML = `<i class="dot"></i><span>No deploy data yet</span>`;
+    document.getElementById("upd").textContent = "Refreshes every 5s";
+  }
+}
+
+async function runChecks() {
+  const results = await Promise.all(CHECKS.map(async (c) => {
+    const t = performance.now();
+    try {
+      const res = await fetch(c.url + (c.url.includes("?") ? "&" : "?") + "t=" + Date.now(), { cache: "no-store", mode: c.mode || "cors" });
+      return { ...c, ok: res.ok, ms: Math.round(performance.now() - t) };
+    } catch { return { ...c, ok: false }; }
+  }));
+  document.getElementById("checks").innerHTML = results.map((r) =>
+    `<div class="check"><i class="dot ${r.ok ? "ok" : "bad"}"></i><b>${esc(r.name)}</b><span>${r.ok ? r.ms + " ms" : "Down"}</span></div>`).join("");
+}
+
+function tick() { loadStatus(); runChecks(); }
+tick();
+setInterval(tick, 5000);
+</script>
+</body>
+</html>
