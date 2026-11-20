@@ -1,0 +1,109 @@
+# Reelaxy production stack (VPS: /opt/reelaxy).
+# Secrets live outside git in /opt/reelaxy/env/ (see deploy/README.md).
+# Run from this folder:  docker compose --env-file /opt/reelaxy/env/compose.env up -d
+name: reelaxy
+
+services:
+  mysql:
+    image: mysql:8.4
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      MYSQL_DATABASE: reelaxy
+      MYSQL_USER: reelaxy
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+      # Migrations create triggers as the app user.
+      - --log-bin-trust-function-creators=1
+      - --max-allowed-packet=64M
+    volumes:
+      - mysql-data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p$$MYSQL_ROOT_PASSWORD --silent"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+    # Never published to the internet; reachable only inside this network.
+
+  backend:
+    build:
+      context: ..
+    image: reelaxy-backend:latest
+    restart: unless-stopped
+    env_file: /opt/reelaxy/env/backend.env
+    depends_on:
+      mysql:
+        condition: service_healthy
+    expose: ["5002"]
+
+  face:
+    build:
+      context: ../face-service
+    image: reelaxy-face:latest
+    restart: unless-stopped
+    env_file: /opt/reelaxy/env/face.env
+    expose: ["8001"]
+
+  frontend:
+    build:
+      context: ../../Reelaxy-frontend
+      args:
+        NEXT_PUBLIC_API_URL: https://api.reelaxy.com
+        NEXT_PUBLIC_SOCKET_URL: https://api.reelaxy.com
+        NEXT_PUBLIC_SITE_URL: https://reelaxy.com
+        INTERNAL_API_URL: http://backend:5002
+    image: reelaxy-frontend:latest
+    restart: unless-stopped
+    depends_on: [backend]
+    expose: ["3002"]
+
+  phpmyadmin:
+    image: phpmyadmin:5
+    restart: unless-stopped
+    environment:
+      PMA_HOST: mysql
+      PMA_ABSOLUTE_URI: https://db.reelaxy.com/
+      UPLOAD_LIMIT: 64M
+    depends_on: [mysql]
+    expose: ["80"]
+
+  coturn:
+    image: coturn/coturn:4.6
+    restart: unless-stopped
+    # Host networking so the relay port range reaches callers directly.
+    network_mode: host
+    command:
+      - -n
+      - --listening-port=3478
+      - --external-ip=${PUBLIC_IP}
+      - --realm=reelaxy.com
+      - --use-auth-secret
+      - --static-auth-secret=${TURN_SECRET}
+      - --min-port=49160
+      - --max-port=49200
+      - --fingerprint
+      - --no-cli
+      - --no-tls
+      - --no-dtls
+      - --no-multicast-peers
+      - --denied-peer-ip=10.0.0.0-10.255.255.255
+      - --denied-peer-ip=172.16.0.0-172.31.255.255
+      - --denied-peer-ip=192.168.0.0-192.168.255.255
+
+  nginx:
+    image: nginx:1.27-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - /opt/reelaxy/nginx/conf.d:/etc/nginx/conf.d:ro
+      - /opt/reelaxy/nginx/htpasswd:/etc/nginx/htpasswd:ro
+      - /opt/reelaxy/certbot/www:/var/www/certbot:ro
+      - /opt/reelaxy/certbot/conf:/etc/letsencrypt:ro
+    depends_on: [frontend, backend, phpmyadmin]
+
+volumes:
+  mysql-data:

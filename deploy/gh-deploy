@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+# Forced command for the GitHub Actions SSH key (see authorized_keys on the VPS).
+# The key can only run a deploy of "frontend" or "backend" - nothing else.
+set -euo pipefail
+case "${SSH_ORIGINAL_COMMAND:-}" in
+  frontend|backend)
+    # Update the backend repo first so the newest deploy script and compose file are used.
+    git -C /opt/reelaxy/Reelaxy-backend fetch --quiet origin main
+    git -C /opt/reelaxy/Reelaxy-backend reset --quiet --hard origin/main
+    exec /opt/reelaxy/Reelaxy-backend/deploy/deploy.sh "$SSH_ORIGINAL_COMMAND"
+    ;;
+  *)
+    echo "Only 'frontend' or 'backend' deploys are allowed." >&2
+    exit 1
+    ;;
+esac
