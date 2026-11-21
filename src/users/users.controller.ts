@@ -4,12 +4,14 @@ import { UsersService } from './users.service';
 import { UpdateProfileDto } from './dto/update-profile.dto';
 import { Roles, RolesGuard } from '../auth/roles.guard';
 import { EmailManagementService } from './email-management.service';
-import { EmailDto, EmailOtpDto, OtpDto } from './dto/email-management.dto';
+import { EmailDto, EmailOtpDto, GuestUpgradeDto, OtpDto } from './dto/email-management.dto';
 
 @Controller('users')
 export class UsersController {
   constructor(private readonly usersService: UsersService, private readonly emailManagement: EmailManagementService) {}
 
+  @UseGuards(AuthGuard('jwt')) @Post('me/upgrade/request-otp') requestGuestUpgrade(@Request() req: any, @Body() body: EmailDto) { return this.emailManagement.requestGuestUpgrade(req.user.userId, body.email); }
+  @UseGuards(AuthGuard('jwt')) @Post('me/upgrade/verify') verifyGuestUpgrade(@Request() req: any, @Body() body: GuestUpgradeDto) { return this.emailManagement.verifyGuestUpgrade(req.user.userId, body.otp, body.password, body.name); }
   @UseGuards(AuthGuard('jwt')) @Get('me/emails') listEmails(@Request() req: any) { return this.emailManagement.list(req.user.userId); }
   @UseGuards(AuthGuard('jwt')) @Post('me/emails/change/request-old-otp') requestOldEmailOtp(@Request() req: any) { return this.emailManagement.requestOldPrimary(req.user.userId); }
   @UseGuards(AuthGuard('jwt')) @Post('me/emails/change/verify-old-otp') verifyOldEmailOtp(@Request() req: any, @Body() body: OtpDto) { return this.emailManagement.verifyOldPrimary(req.user.userId, body.otp); }

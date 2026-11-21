@@ -1,8 +1,9 @@
 import { renderEmail } from '../mail/email-layout';
-import { BadRequestException, ConflictException, Injectable, ServiceUnavailableException, UnauthorizedException } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, Injectable, ServiceUnavailableException, UnauthorizedException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { createHmac, randomInt, timingSafeEqual } from 'crypto';
 import * as nodemailer from 'nodemailer';
+import * as bcrypt from 'bcryptjs';
 import { DataSource, Repository } from 'typeorm';
 import { User } from './user.entity';
 import { UserEmail } from './user-email.entity';
@@ -18,8 +19,11 @@ export class EmailManagementService {
   private secret() { const secret = process.env.OTP_HASH_SECRET?.trim() || process.env.JWT_SECRET?.trim(); if (!secret) throw new ServiceUnavailableException('OTP service is not configured.'); return secret; }
   private hash(email: string, otp: string) { return createHmac('sha256', this.secret()).update(`email-management:${email}:${otp}`).digest('hex'); }
   private mailer() { if (this.transporter) return this.transporter; const host = process.env.SMTP_HOST?.trim(), user = process.env.SMTP_USER?.trim(), pass = process.env.SMTP_PASSWORD; if (!host || !user || !pass) throw new ServiceUnavailableException('Email delivery is not configured.'); const port = Number(process.env.SMTP_PORT || 465); return this.transporter = nodemailer.createTransport({ host, port, secure: (process.env.SMTP_SECURE || String(port === 465)).toLowerCase() === 'true', auth: { user, pass } }); }
-  private async send(userId: string, purpose: EmailChallengePurpose, emailInput: string, title: string) {
-    const email = this.normal(emailInput), now = new Date(); const current = await this.challenges.findOne({ where: { userId, purpose } });
+  private async send(userId: string, purpose: EmailChallengePurpose, emailInput: string, title: string, allowGuest = false) {
+    const email = this.normal(emailInput), now = new Date();
+    const owner = await this.users.findOne({ where: { id: userId }, select: ['id', 'isGuest'] });
+    if (owner?.isGuest && !allowGuest) throw new ForbiddenException('Guest accounts cannot manage emails. Create a full account first.');
+    if (email.endsWith('.invalid')) throw new BadRequestException('This email address cannot receive mail.'); const current = await this.challenges.findOne({ where: { userId, purpose } });
     if (current && now.getTime() - current.lastSentAt.getTime() < RESEND_MS) throw new BadRequestException('Please wait one minute before requesting another OTP.');
     const inWindow = current && now.getTime() - current.sendWindowStartedAt.getTime() < 3_600_000;
     if (inWindow && current.sendCount >= MAX_SENDS) throw new BadRequestException('Too many OTP requests. Please try again in one hour.');
@@ -37,7 +41,7 @@ export class EmailManagementService {
     challenge.verifiedAt = new Date(); await this.challenges.save(challenge); return challenge;
   }
   private async primary(userId: string) { const primary = await this.emails.findOne({ where: { userId, isPrimary: true } }); if (!primary) throw new BadRequestException('No primary email is available.'); return primary; }
-  async list(userId: string) { const user = await this.users.findOne({ where: { id: userId } }); if (!user) throw new UnauthorizedException(); let records = await this.emails.find({ where: { userId }, order: { isPrimary: 'DESC', createdAt: 'ASC' } }); if (!records.length) { await this.emails.save(this.emails.create({ userId, email: user.email, isPrimary: true, loginEnabled: true, verifiedAt: user.emailVerifiedAt || user.createdAt })); records = await this.emails.find({ where: { userId }, order: { isPrimary: 'DESC' } }); } return { emails: records.map(({ email, isPrimary, verifiedAt, loginEnabled }) => ({ email, isPrimary, verified: !!verifiedAt, loginEnabled })) }; }
+  async list(userId: string) { const user = await this.users.findOne({ where: { id: userId } }); if (!user) throw new UnauthorizedException(); if (user.isGuest) return { emails: [], guest: true }; let records = await this.emails.find({ where: { userId }, order: { isPrimary: 'DESC', createdAt: 'ASC' } }); if (!records.length) { /* orIgnore: two first-load requests can race to create the same primary record */ await this.emails.createQueryBuilder().insert().into(UserEmail).values({ userId, email: user.email, isPrimary: true, loginEnabled: true, verifiedAt: user.emailVerifiedAt || user.createdAt }).orIgnore().execute(); records = await this.emails.find({ where: { userId }, order: { isPrimary: 'DESC' } }); } return { emails: records.map(({ email, isPrimary, verifiedAt, loginEnabled }) => ({ email, isPrimary, verified: !!verifiedAt, loginEnabled })), guest: false }; }
   async requestOldPrimary(userId: string) { const primary = await this.primary(userId); return this.send(userId, 'change_old', primary.email, 'verify your current email'); }
   async verifyOldPrimary(userId: string, otp: string) { await this.verify(userId, 'change_old', otp); return { message: 'Current email verified. You can now enter your new email.' }; }
   async requestNewPrimary(userId: string, email: string) { const old = await this.challenges.findOne({ where: { userId, purpose: 'change_old' } }); if (!old?.verifiedAt || old.expiresAt <= new Date()) throw new UnauthorizedException('Verify your current email before continuing.'); const normalized = this.normal(email); if (normalized === (await this.primary(userId)).email) throw new BadRequestException('Enter a different email address.'); if (await this.emails.existsBy({ email: normalized }) || await this.users.existsBy({ email: normalized })) throw new ConflictException('This email is already in use.'); return this.send(userId, 'change_new', normalized, 'verify your new email'); }
@@ -47,6 +51,33 @@ export class EmailManagementService {
   async requestRemoveSecondary(userId: string, email: string) { const record = await this.emails.findOne({ where: { userId, email: this.normal(email) } }); if (!record || record.isPrimary) throw new BadRequestException('Only a secondary email can be removed.'); return this.send(userId, 'secondary_remove', (await this.primary(userId)).email, 'confirm secondary email removal'); }
   async removeSecondary(userId: string, email: string, otp: string) { const challenge = await this.verify(userId, 'secondary_remove', otp); const result = await this.emails.delete({ userId, email: this.normal(email), isPrimary: false }); if (!result.affected) throw new BadRequestException('Secondary email was not found.'); await this.challenges.delete(challenge.id); return { message: 'Secondary email removed.', emails: (await this.list(userId)).emails }; }
   async makePrimary(userId: string, email: string) { const record = await this.emails.findOne({ where: { userId, email: this.normal(email) } }); if (!record?.verifiedAt || record.isPrimary) throw new BadRequestException('Choose a verified secondary email.'); const old = await this.challenges.findOne({ where: { userId, purpose: 'change_old' } }); if (!old?.verifiedAt || old.expiresAt <= new Date()) throw new UnauthorizedException('Verify your current primary email first.'); const account = await this.users.findOne({ where: { id: userId }, select: ['id', 'createdByAgentId'] }); await this.dataSource.transaction(async manager => { await manager.getRepository(UserEmail).update({ userId, isPrimary: true }, { isPrimary: false, loginEnabled: true }); await manager.getRepository(UserEmail).update(record.id, { isPrimary: true, loginEnabled: true }); await manager.getRepository(User).update(userId, { email: record.email, emailVerifiedAt: new Date(), ...(account?.createdByAgentId ? { agentEmailChangedAt: new Date() } : {}) }); }); await this.challenges.delete({ userId, purpose: 'change_old' }); return { message: 'Primary email changed successfully. Your old primary email can still sign in until removed.', emails: (await this.list(userId)).emails }; }
+  /** Guest -> permanent account, step 1: email a code to the address the guest wants to keep. */
+  async requestGuestUpgrade(userId: string, email: string) {
+    const user = await this.users.findOne({ where: { id: userId }, select: ['id', 'isGuest', 'status'] });
+    if (!user?.isGuest) throw new BadRequestException('This account is already permanent.');
+    const normalized = this.normal(email);
+    if (await this.emails.existsBy({ email: normalized }) || await this.users.existsBy({ email: normalized })) throw new ConflictException('This email is already registered. Log in with it instead.');
+    return this.send(userId, 'guest_upgrade', normalized, 'make your Reelaxy account permanent', true);
+  }
+
+  /** Step 2: verify the code, set email + password, and keep everything else (chats, likes, wallet). */
+  async verifyGuestUpgrade(userId: string, otp: string, password: string, name?: string) {
+    const user = await this.users.findOne({ where: { id: userId }, select: ['id', 'isGuest', 'name'] });
+    if (!user?.isGuest) throw new BadRequestException('This account is already permanent.');
+    const challenge = await this.verify(userId, 'guest_upgrade', otp);
+    if (await this.users.existsBy({ email: challenge.email }) || await this.emails.existsBy({ email: challenge.email })) throw new ConflictException('This email is already registered. Log in with it instead.');
+    const now = new Date();
+    const hashed = await bcrypt.hash(password, 12);
+    const newName = name?.trim() || user.name;
+    await this.dataSource.transaction(async manager => {
+      await manager.getRepository(User).update(userId, { email: challenge.email, password: hashed, isGuest: false, emailVerifiedAt: now, name: newName });
+      await manager.getRepository(UserEmail).delete({ userId });
+      await manager.getRepository(UserEmail).save(manager.getRepository(UserEmail).create({ userId, email: challenge.email, isPrimary: true, loginEnabled: true, verifiedAt: now }));
+    });
+    await this.challenges.delete(challenge.id);
+    return { message: 'Your account is now permanent. Log in any time with this email and password.', email: challenge.email, name: newName };
+  }
+
   async requestRecovery(userId: string) { const secondary = await this.emails.findOne({ where: { userId, isPrimary: false }, order: { createdAt: 'ASC' } }); if (!secondary?.verifiedAt) throw new BadRequestException('No verified secondary email is available. Please contact support for account recovery.'); return this.send(userId, 'recovery', secondary.email, 'recover your email access'); }
   async verifyRecovery(userId: string, otp: string) { const recovery = await this.verify(userId, 'recovery', otp); const primary = await this.primary(userId); const now = new Date(); const old = await this.challenges.findOne({ where: { userId, purpose: 'change_old' } }) || this.challenges.create({ userId, purpose: 'change_old', email: primary.email, otpHash: recovery.otpHash, expiresAt: recovery.expiresAt, attempts: 0, lastSentAt: now, sendWindowStartedAt: now, sendCount: 1, verifiedAt: null }); Object.assign(old, { email: primary.email, otpHash: recovery.otpHash, expiresAt: recovery.expiresAt, verifiedAt: now, attempts: 0, lastSentAt: now, sendWindowStartedAt: now, sendCount: 1 }); await this.challenges.save(old); await this.challenges.delete(recovery.id); return { message: 'Recovery email verified. You can now choose a new primary email.' }; }
 }

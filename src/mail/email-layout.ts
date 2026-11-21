@@ -77,7 +77,7 @@ export function renderEmail(content: EmailContent): { html: string; text: string
     <tr><td align="center" style="padding:6px 0 22px">
       <a href="${SITE_URL}" style="text-decoration:none">
         <img src="${LOGO_URL}" width="56" height="56" alt="Reelaxy" style="display:block;margin:0 auto;border:0;border-radius:16px">
-        <div style="margin-top:10px;font-size:24px;font-weight:bold;color:${TEXT}">Connect<span style="color:${BRAND}">Love</span></div>
+        <div style="margin-top:10px;font-size:24px;font-weight:bold;color:${TEXT}">Reel<span style="color:${BRAND}">axy</span></div>
       </a>
     </td></tr>
 

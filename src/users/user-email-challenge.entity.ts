@@ -1,6 +1,6 @@
 import { Column, CreateDateColumn, Entity, Index, PrimaryGeneratedColumn, UpdateDateColumn } from 'typeorm';
 
-export type EmailChallengePurpose = 'change_old' | 'change_new' | 'secondary_add' | 'secondary_remove' | 'recovery';
+export type EmailChallengePurpose = 'change_old' | 'change_new' | 'secondary_add' | 'secondary_remove' | 'recovery' | 'guest_upgrade';
 
 @Entity('user_email_challenges')
 @Index(['userId', 'purpose'], { unique: true })
