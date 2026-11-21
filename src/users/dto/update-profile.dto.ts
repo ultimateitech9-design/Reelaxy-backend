@@ -84,6 +84,11 @@ export class UpdateProfileDto {
   @IsOptional()
   @IsArray()
   @IsString({ each: true })
+  spokenLanguages?: string[];
+
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
   personalityWords?: string[];
 
   @IsOptional()

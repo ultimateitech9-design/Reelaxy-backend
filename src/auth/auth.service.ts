@@ -1,3 +1,4 @@
+import { normalizeLanguages } from '../common/spoken-languages';
 import {
   Injectable, BadRequestException, ConflictException, UnauthorizedException,
 } from '@nestjs/common';
@@ -97,6 +98,7 @@ export class AuthService {
       const log = await this.auditRepo.save(this.auditRepo.create({
         userId: user.id,
         user: user.name || user.email,
+        email: user.email || null,
         activity: 'Logged in',
         ipAddress: context.ipAddress || 'Unknown',
         action: 'Active',
@@ -214,6 +216,7 @@ export class AuthService {
       birthDate,
       gender: dto.gender,
       city: dto.city,
+      spokenLanguages: normalizeLanguages(dto.spokenLanguages),
       locationLatitude: dto.locationLatitude,
       locationLongitude: dto.locationLongitude,
       plan: 'free',

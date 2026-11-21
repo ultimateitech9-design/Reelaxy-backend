@@ -1,3 +1,4 @@
+import { normalizeLanguages } from '../common/spoken-languages';
 import { BadRequestException, ConflictException, HttpException, Injectable, NotFoundException, ServiceUnavailableException, UnauthorizedException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { JwtService } from '@nestjs/jwt';
@@ -171,7 +172,7 @@ export class AgentsService {
       }
     }
     const prepared = [];
-    for (const user of dto.users) prepared.push({ ...user, photos: user.photos || [], photosVisibleToNonMatches: true, password: await bcrypt.hash(user.password, 12), createdByAgentId: agentId, role: 'user' as const, status: 'active' as const, onboardingCompleted: false, isVerified: false });
+    for (const user of dto.users) prepared.push({ ...user, spokenLanguages: normalizeLanguages(user.spokenLanguages), photos: user.photos || [], photosVisibleToNonMatches: true, password: await bcrypt.hash(user.password, 12), createdByAgentId: agentId, role: 'user' as const, status: 'active' as const, onboardingCompleted: false, isVerified: false });
     const result = await this.writeConflict(() => this.db.transaction(async manager => {
       const agent = await manager.findOne(Agent, { where: { id: agentId }, lock: { mode: 'pessimistic_write' } });
       if (!agent || agent.status !== 'active') throw new UnauthorizedException('This agent account is not active.');

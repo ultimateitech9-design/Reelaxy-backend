@@ -7,6 +7,16 @@ import { DiscoveryService } from './discovery.service';
 export class DiscoveryController {
   constructor(private readonly discoveryService: DiscoveryService) {}
 
+  @Get('languages')
+  languages(@Request() req: any) {
+    return this.discoveryService.languageOptions(req.user.userId);
+  }
+
+  @Get('professions')
+  professions(@Request() req: any) {
+    return this.discoveryService.professionOptions(req.user.userId);
+  }
+
   @Get('search')
   async searchProfiles(@Request() req: any, @Query() query: Record<string, string>) {
     if (!query.search?.trim()) return { items: [], hasMore: false, nextCursor: null };
@@ -43,6 +53,8 @@ export class DiscoveryController {
     @Query('interests') interests?: string,
     @Query('verifiedOnly') verifiedOnly?: string,
     @Query('presence') presence?: string,
+    @Query('professions') professions?: string,
+    @Query('languages') languages?: string,
   ) {
     return this.discoveryService.getSuggestions(req.user.userId, {
       cursor,
@@ -55,6 +67,8 @@ export class DiscoveryController {
       ageMax: ageMax ? Number(ageMax) : undefined,
       interestedIn,
       goals: goals ? goals.split(',').map((goal) => goal.trim()).filter(Boolean) : undefined,
+      professions: professions ? professions.split('|').map((p) => p.trim()).filter(Boolean).slice(0, 20) : undefined,
+      languages: languages ? languages.split('|').map((l) => l.trim()).filter(Boolean).slice(0, 10) : undefined,
       maxDistance: maxDistance ? Number(maxDistance) : undefined,
       page: page ? Number(page) : undefined,
       limit: limit ? Number(limit) : undefined,

@@ -20,6 +20,7 @@ import { UserActivityService } from '../users/user-activity.service';
 import { AdminAccountsService } from '../admin/admin-accounts.service';
 import { AdminAgentStatusDto } from '../admin/admin-agent-status.dto';
 import { PaymentsService } from '../payments/payments.service';
+import { requestContext } from '../common/request-context';
 import { CoinTransaction } from '../users/coin-transaction.entity';
 import { VideoCall } from '../messages/video-call.entity';
 import { DEFAULT_DIRECT_CALL_SETTINGS, DirectCallSettings } from '../direct-calls/direct-calls.service';
@@ -446,13 +447,20 @@ export class PlatformApiController {
     };
   }
 
+  /** Descriptive log entry, recorded under the staff member making the request. */
   private async audit(module: string, action: string, activity: string) {
+    const actor = requestContext.actor();
+    requestContext.markAudited();
     await this.auditRepo.save(this.auditRepo.create({
-      user: 'system',
+      userId: actor?.userId || (null as any),
+      user: actor?.name || 'system',
+      email: actor?.email || null,
+      role: actor?.role || (null as any),
       module,
       action,
       activity,
-      ipAddress: '127.0.0.1',
+      ipAddress: actor?.ip || '127.0.0.1',
+      device: actor?.device || (null as any),
     }));
   }
 
@@ -1486,17 +1494,18 @@ export class PlatformApiController {
   @Get('logs')
   @Roles('super_admin')
   async logs() {
-    const logs = await this.auditRepo.find({ order: { createdAt: 'DESC' }, take: 250 });
+    const logs = await this.auditRepo.find({ order: { createdAt: 'DESC' }, take: 500 });
     const now = Date.now();
     return {
       logs: logs.map((log) => ({
         id: log.id,
         user: log.user,
+        email: log.email || null,
         activity: log.activity,
         ipAddress: log.ipAddress,
         action: log.action,
         module: log.module,
-        role: log.role,
+        role: log.role ? String(log.role).replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase()) : log.role,
         device: log.device,
         loginAt: log.loginAt,
         lastActivityAt: log.lastActivityAt,

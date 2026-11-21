@@ -29,6 +29,10 @@ export class AuditLog {
   @Column({ length: 40, nullable: true })
   role: string;
 
+  /** Staff email (who did it). */
+  @Column({ type: 'varchar', length: 255, nullable: true })
+  email: string | null;
+
   @Column({ length: 255, nullable: true })
   device: string;
 

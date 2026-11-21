@@ -1,3 +1,4 @@
+import { normalizeLanguages } from '../common/spoken-languages';
 import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { EventEmitter } from 'node:events';
 import { createHmac } from 'node:crypto';
@@ -50,6 +51,7 @@ export class UsersService {
       kycVerifiedAt: user.kycVerifiedAt,
       photosVisibleToNonMatches: true,
       interests: user.interests || [],
+      spokenLanguages: user.spokenLanguages || [],
       personalityWords: user.personalityWords || [],
       personality: user.personalityWords || [],
       hobbies: user.hobbies || [],
@@ -96,6 +98,7 @@ export class UsersService {
       city: user.city,
       bio: user.bio,
       interests: user.interests || [],
+      spokenLanguages: user.spokenLanguages || [],
       personality: user.personalityWords || [],
       hobbies: user.hobbies || [],
       avatarUrl: user.avatarUrl,
@@ -139,6 +142,9 @@ export class UsersService {
     }
     if (sanitizedData.interests) {
       sanitizedData.interests = normalizeTags(sanitizedData.interests);
+    }
+    if (sanitizedData.spokenLanguages !== undefined) {
+      sanitizedData.spokenLanguages = normalizeLanguages(sanitizedData.spokenLanguages);
     }
     if (sanitizedData.personalityWords) {
       sanitizedData.personalityWords = normalizeTags(sanitizedData.personalityWords);

@@ -1,3 +1,4 @@
+import { normalizeLanguages } from '../common/spoken-languages';
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import sharp from 'sharp';
 import { InjectRepository } from '@nestjs/typeorm';
@@ -22,6 +23,10 @@ interface DiscoveryFilters {
   ageMin?: number;
   ageMax?: number;
   goals?: string[];
+  /** Exact professions to include (case-insensitive). */
+  professions?: string[];
+  /** Spoken languages; a profile matches if it speaks any of them. */
+  languages?: string[];
   maxDistance?: number;
   page?: number;
   limit?: number;
@@ -71,6 +76,43 @@ export class DiscoveryService {
     private readonly userRepo: Repository<User>,
     private readonly searchService: SearchService,
   ) {}
+
+  /** Languages members (women) have entered, most common first. No built-in list: only real data. */
+  async languageOptions(currentUserId: string) {
+    const rows = await this.userRepo.createQueryBuilder('user')
+      .select('user.spokenLanguages', 'langs')
+      .where("user.role = 'user' AND user.status = 'active' AND user.id <> :me", { me: currentUserId })
+      .andWhere('LOWER(TRIM(user.gender)) IN (:...genders)', { genders: GENDER_ALIASES.female })
+      .andWhere('user.spokenLanguages IS NOT NULL')
+      .getRawMany();
+    const counts = new Map<string, number>();
+    for (const row of rows) {
+      const list = typeof row.langs === 'string' ? (() => { try { return JSON.parse(row.langs); } catch { return []; } })() : row.langs;
+      for (const lang of normalizeLanguages(list)) counts.set(lang, (counts.get(lang) || 0) + 1);
+    }
+    return { languages: [...counts.entries()].map(([name, count]) => ({ name, count })).sort((a, b) => b.count - a.count || a.name.localeCompare(b.name)) };
+  }
+
+  /** Professions present among discoverable members (women), most common first — for the Discover filter. */
+  async professionOptions(currentUserId: string) {
+    const rows = await this.userRepo.createQueryBuilder('user')
+      .select('TRIM(user.profession)', 'profession')
+      .addSelect('COUNT(*)', 'count')
+      .where("user.role = 'user' AND user.status = 'active' AND user.id <> :me", { me: currentUserId })
+      .andWhere('LOWER(TRIM(user.gender)) IN (:...genders)', { genders: GENDER_ALIASES.female })
+      .andWhere("user.profession IS NOT NULL AND TRIM(user.profession) <> ''")
+      .groupBy('LOWER(TRIM(user.profession))')
+      .addGroupBy('TRIM(user.profession)')
+      .orderBy('count', 'DESC')
+      .limit(60)
+      .getRawMany();
+    const seen = new Set<string>();
+    return {
+      professions: rows
+        .map((row) => ({ name: String(row.profession), count: Number(row.count) }))
+        .filter((row) => { const k = row.name.toLowerCase(); if (seen.has(k)) return false; seen.add(k); return true; }),
+    };
+  }
 
   async getSuggestions(currentUserId: string, filters: DiscoveryFilters = {}): Promise<any> {
     // Do not hydrate the current user's complete base64 photo gallery before
@@ -156,11 +198,9 @@ export class DiscoveryService {
     const currentGender = canonicalGender(currentUser?.gender);
     const rawRequestedGender = String(filters.interestedIn || 'everyone').trim().toLowerCase();
     const requestedGender = rawRequestedGender === 'everyone' ? 'everyone' : canonicalGender(rawRequestedGender);
-    const genderGroups = filters.nameSearch && requestedGender === 'everyone'
-      ? [Object.values(GENDER_ALIASES).flat()]
-      : requestedGender !== 'everyone' && DISCOVERABLE_GENDERS.has(requestedGender)
-      ? [GENDER_ALIASES[requestedGender] || [requestedGender]]
-      : defaultGenderGroups(currentGender);
+    // Reelaxy Discover shows women only (no gender filter in the app).
+    void requestedGender; void currentGender;
+    const genderGroups = [GENDER_ALIASES.female];
     const visibleGenders = [...new Set(genderGroups.flat())];
     const genderRankParts = genderGroups.map((_, index) =>
       'WHEN LOWER(TRIM(user.gender)) IN (:...genderRank' + index + ') THEN ' + index,
@@ -193,8 +233,11 @@ export class DiscoveryService {
       if (filters.nameSearch) {
         const name = "LOWER(TRIM(REGEXP_REPLACE(user.name, '[[:space:]]+', ' ')))";
         const escaped = term.toLowerCase().replace(/[!%_]/g, value => '!' + value);
-        query.andWhere(name + " LIKE :nameContains ESCAPE '!'", { nameContains: '%' + escaped + '%' })
-          .addSelect('CASE WHEN ' + name + ' = :nameExact THEN 0 WHEN ' + name + " LIKE :namePrefix ESCAPE '!' THEN 1 ELSE 2 END", 'nameMatchScore')
+        // One box searches name, city/location and profession; name matches rank first, then city.
+        const city = "LOWER(COALESCE(user.city, ''))";
+        const profession = "LOWER(COALESCE(user.profession, ''))";
+        query.andWhere('(' + name + " LIKE :nameContains ESCAPE '!' OR " + city + " LIKE :nameContains ESCAPE '!' OR " + profession + " LIKE :nameContains ESCAPE '!')", { nameContains: '%' + escaped + '%' })
+          .addSelect('CASE WHEN ' + name + ' = :nameExact THEN 0 WHEN ' + name + " LIKE :namePrefix ESCAPE '!' THEN 1 WHEN " + name + " LIKE :nameContains ESCAPE '!' THEN 2 WHEN " + city + " LIKE :namePrefix ESCAPE '!' THEN 3 WHEN " + city + " LIKE :nameContains ESCAPE '!' THEN 4 ELSE 5 END", 'nameMatchScore')
           .setParameters({ nameExact: term.toLowerCase(), namePrefix: escaped + '%' })
           .orderBy('nameMatchScore', 'ASC').addOrderBy('user.createdAt', 'DESC');
       } else {
@@ -232,10 +275,16 @@ export class DiscoveryService {
     } else if (filters.presence === 'offline') {
       query.andWhere('NOT (user.isOnline = 1 AND user.showOnlineStatus = 1)');
     }
-    // "Looking for" is a real filter: only people with one of the chosen goals.
-    const goalFilter = (filters.goals ?? []).map((goal) => String(goal).trim()).filter(Boolean).slice(0, 10);
-    if (goalFilter.length) {
-      query.andWhere('user.relationshipGoal IN (:...goalFilter)', { goalFilter });
+    // "Looking for" was removed from Discover, so goals no longer narrow the results.
+    const languageFilter = normalizeLanguages(filters.languages ?? []);
+    if (languageFilter.length) {
+      const clauses = languageFilter.map((_, i) => `JSON_CONTAINS(COALESCE(user.spokenLanguages, JSON_ARRAY()), JSON_QUOTE(:lang${i}))`);
+      query.andWhere('(' + clauses.join(' OR ') + ')');
+      languageFilter.forEach((lang, i) => query.setParameter(`lang${i}`, lang));
+    }
+    const professionFilter = (filters.professions ?? []).map((p) => String(p).trim().toLowerCase()).filter(Boolean).slice(0, 20);
+    if (professionFilter.length) {
+      query.andWhere('LOWER(TRIM(user.profession)) IN (:...professionFilter)', { professionFilter });
     }
 
     const requestedDistance = Number.isFinite(filters.maxDistance)

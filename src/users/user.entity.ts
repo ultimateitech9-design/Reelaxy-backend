@@ -78,6 +78,10 @@ export class User {
   @Column({ type: 'json', nullable: true })
   interests: string[];
 
+  /** Languages the member speaks, e.g. ["Hindi", "English"]. */
+  @Column({ type: 'json', nullable: true })
+  spokenLanguages: string[] | null;
+
   @Column({ type: 'json', nullable: true })
   personalityWords: string[];
 
