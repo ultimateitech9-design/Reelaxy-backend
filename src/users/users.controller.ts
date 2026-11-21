@@ -90,14 +90,14 @@ export class UsersController {
   }
 
   @UseGuards(AuthGuard('jwt'), RolesGuard)
-  @Roles('super_admin')
+  @Roles('admin', 'super_admin')
   @Get('admin/coin-transactions')
   getCoinTransactions() {
     return this.usersService.getCoinTransactions();
   }
 
   @UseGuards(AuthGuard('jwt'), RolesGuard)
-  @Roles('super_admin')
+  @Roles('admin', 'super_admin')
   @Post('admin/coins/credit')
   creditGiftCoins(
     @Request() req: any,
@@ -112,7 +112,7 @@ export class UsersController {
   }
 
   @UseGuards(AuthGuard('jwt'), RolesGuard)
-  @Roles('super_admin')
+  @Roles('admin', 'super_admin')
   @Patch('admin/coin-transactions/:id/withdrawal')
   updateWithdrawalStatus(@Param('id') id: string, @Body('status') status: 'completed' | 'rejected') {
     return this.usersService.updateWithdrawalStatus(id, status);

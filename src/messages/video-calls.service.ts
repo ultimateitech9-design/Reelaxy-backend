@@ -1,3 +1,4 @@
+import { callsBlocked } from '../matches/block-scope';
 import { ForbiddenException, Injectable, Logger, NotFoundException, OnApplicationBootstrap } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { In, IsNull, MoreThan, MoreThanOrEqual, Not, Repository } from 'typeorm';
@@ -62,6 +63,7 @@ export class VideoCallsService implements OnApplicationBootstrap {
     if (match.status !== MatchStatus.MATCHED) {
       throw new ForbiddenException('Video calls are available only after both users match.');
     }
+    if (callsBlocked(match)) throw new ForbiddenException('Calls are blocked between you two.');
     return match;
   }
 

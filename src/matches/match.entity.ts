@@ -41,6 +41,10 @@ export class MatchRelation {
   @Column({ type: 'enum', enum: MatchStatus, nullable: true })
   statusBeforeBlock: MatchStatus | null;
 
+  /** What the block covers: 'all' (status BLOCKED) or only 'calls' / 'messages'. */
+  @Column({ type: 'varchar', length: 16, nullable: true })
+  blockScope: 'all' | 'calls' | 'messages' | null;
+
   // Members who cleared this chat; this only hides the conversation for them.
   @Column({ type: 'text', nullable: true })
   hiddenFromChatForUserIds: string | null;

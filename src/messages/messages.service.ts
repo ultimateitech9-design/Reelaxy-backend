@@ -1,3 +1,4 @@
+import { messagesBlocked } from '../matches/block-scope';
 import { BadRequestException, ForbiddenException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, In, LessThan } from 'typeorm';
@@ -204,6 +205,7 @@ export class MessagesService {
 
   async create(conversationId: string, senderId: string, receiverId: string, content: string, replyToMessageId?: string): Promise<Message> {
     const match = await this.assertConversationAccess(conversationId, senderId);
+    if (messagesBlocked(match)) throw new ForbiddenException('Messaging is blocked in this chat.');
     const validReceiver = receiverId === match.senderId || receiverId === match.receiverId;
     if (!validReceiver || receiverId === senderId) {
       throw new ForbiddenException('Invalid receiver for this conversation.');

@@ -1,6 +1,7 @@
 import { ConflictException, ForbiddenException, Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { In, Repository } from 'typeorm';
+import { CoinTransaction } from '../users/coin-transaction.entity';
 import { User } from '../users/user.entity';
 import { Contact } from '../support/contact.entity';
 import { Payment } from '../platform/payment.entity';
@@ -24,23 +25,24 @@ export class AdminService {
   async getStats() {
     const now = new Date();
     const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
-    const totalUsers = await this.userRepo.count();
-    const premiumUsers = await this.userRepo.count({ where: [{ plan: 'gold' }, { plan: 'platinum' }] });
-    const activeUsers = await this.userRepo.count({ where: { status: 'active' } });
-    const openTickets = await this.contactRepo.count({ where: { status: 'open' } });
-    const revenue = await this.paymentRepo
-      .createQueryBuilder('payment')
-      .select('COALESCE(SUM(payment.amount), 0)', 'total')
-      .where('payment.status = :status', { status: 'successful' })
-      .andWhere('payment.createdAt >= :monthStart', { monthStart })
-      .getRawOne();
-
+    const recharges = this.userRepo.manager.getRepository(CoinTransaction);
+    const [totalUsers, activeUsers, openTickets, buyers, revenue] = await Promise.all([
+      this.userRepo.count({ where: { role: 'user' } }),
+      this.userRepo.count({ where: { role: 'user', status: 'active' } }),
+      this.contactRepo.count({ where: { status: 'open' } }),
+      recharges.createQueryBuilder('tx').select('COUNT(DISTINCT tx.userId)', 'n')
+        .where("tx.type = 'recharge' AND tx.status = 'completed'").getRawOne(),
+      recharges.createQueryBuilder('tx').select('COALESCE(SUM(tx.amountPaise), 0)', 'total')
+        .where("tx.type = 'recharge' AND tx.status = 'completed'")
+        .andWhere('tx.createdAt >= :monthStart', { monthStart }).getRawOne(),
+    ]);
     return {
       totalUsers,
-      premiumUsers,
+      // Members who bought at least one coin pack (Reelaxy's only paid product).
+      premiumUsers: Number(buyers?.n || 0),
       activeUsers,
       openTickets,
-      revenueMtd: Number(revenue?.total || 0),
+      revenueMtd: Number(revenue?.total || 0) / 100,
     };
   }
 
@@ -51,7 +53,7 @@ export class AdminService {
     const rows = await this.userRepo
       .createQueryBuilder('user')
       .select([
-        'user.id', 'user.name', 'user.email', 'user.role', 'user.plan',
+        'user.id', 'user.name', 'user.email', 'user.role', 'user.plan', 'user.coinBalance',
         'user.status', 'user.isVerified', 'user.city', 'user.createdAt', 'user.updatedAt',
       ])
       .orderBy('user.createdAt', 'DESC')
@@ -66,6 +68,7 @@ export class AdminService {
         email: user.email,
         role: user.role,
         plan: user.plan,
+        coinBalance: user.coinBalance ?? 0,
         status: user.status,
         isVerified: user.isVerified,
         city: user.city,
@@ -151,23 +154,26 @@ export class AdminService {
     }));
   }
 
+  /** Wallet recharges (coin packs) — replaces the old subscription list. */
   async getSubscriptions() {
-    const users = await this.userRepo.find({ order: { createdAt: 'DESC' } });
-    const free = users.filter((user) => user.plan === 'free').length;
-    const gold = users.filter((user) => user.plan === 'gold').length;
-    const platinum = users.filter((user) => user.plan === 'platinum').length;
-
+    const rows = await this.userRepo.manager.getRepository(CoinTransaction).find({
+      where: { type: 'recharge', status: 'completed' },
+      order: { createdAt: 'DESC' },
+      take: 300,
+    });
+    const ids = [...new Set(rows.map((row) => row.userId).filter(Boolean))] as string[];
+    const users = ids.length ? await this.userRepo.find({ where: { id: In(ids) }, select: ['id', 'name', 'email'] }) : [];
+    const byId = new Map(users.map((user) => [user.id, user]));
+    const revenue = rows.reduce((sum, row) => sum + Number(row.amountPaise || 0) / 100, 0);
     return {
-      totals: { free, plus: gold, premium: platinum },
-      users: users
-        .filter((user) => user.plan !== 'free')
-        .map((user) => ({
-          id: user.id,
-          name: user.name,
-          email: user.email,
-          plan: user.plan === 'platinum' ? 'Diamond' : user.plan === 'gold' ? 'Gold' : 'Free',
-          joined: user.createdAt,
-        })),
+      totals: { recharges: rows.length, buyers: ids.length, revenue },
+      users: rows.map((row) => ({
+        id: row.id,
+        name: (row.userId && byId.get(row.userId)?.name) || 'Deleted user',
+        email: (row.userId && byId.get(row.userId)?.email) || '',
+        plan: `${(row.userCoins || row.grossCoins).toLocaleString('en-IN')} coins · \u20B9${(Number(row.amountPaise || 0) / 100).toLocaleString('en-IN')}`,
+        joined: row.createdAt,
+      })),
     };
   }
 

@@ -9,7 +9,7 @@ type CouponInput = { code?: string; discountPercent?: number; applicablePlan?: C
 
 @Controller('api/coupons')
 @UseGuards(AuthGuard('jwt'), RolesGuard)
-@Roles('super_admin')
+@Roles('admin', 'super_admin')
 export class CouponsController {
   constructor(@InjectRepository(Coupon) private readonly coupons: Repository<Coupon>) {}
 

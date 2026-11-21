@@ -1,3 +1,4 @@
+import { parseBlockScope } from './block-scope';
 import { Controller, Delete, Get, Post, Patch, Param, Body, Query, UseGuards, Request } from '@nestjs/common';
 import { MatchesService } from './matches.service';
 import { MatchStatus } from './match.entity';
@@ -42,8 +43,8 @@ export class MatchesController {
   }
 
   @Patch('block/:id')
-  async blockUser(@Request() req, @Param('id') id: string) {
-    return this.matchesService.blockMatch(id, req.user.userId);
+  async blockUser(@Request() req, @Param('id') id: string, @Body('scope') scope?: string) {
+    return this.matchesService.blockMatch(id, req.user.userId, parseBlockScope(scope));
   }
 
   @Post('respond')

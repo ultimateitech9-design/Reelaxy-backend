@@ -1,3 +1,4 @@
+import { applyBlock, BlockScope, callsBlocked } from '../matches/block-scope';
 import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
 import { DataSource, In, IsNull, MoreThanOrEqual, Not, Repository } from 'typeorm';
@@ -82,7 +83,7 @@ export class DirectCallsService {
    * match: a BLOCKED relation is created whose pre-block status is DECLINED,
    * so unblocking never turns it into a match.
    */
-  async blockUser(userId: string, otherUserId: string) {
+  async blockUser(userId: string, otherUserId: string, scope: BlockScope = 'all') {
     if (!otherUserId || otherUserId === userId) throw new BadRequestException('Choose another user to block.');
     const relation = await this.matchRepo.findOne({
       where: [
@@ -91,22 +92,20 @@ export class DirectCallsService {
       ],
     });
     if (relation) {
-      if (relation.status !== MatchStatus.BLOCKED) {
-        relation.statusBeforeBlock = relation.status;
-        relation.status = MatchStatus.BLOCKED;
-        relation.blockedByUserId = userId;
-        await this.matchRepo.save(relation);
-      }
+      await this.matchRepo.save(applyBlock(relation, userId, scope));
     } else {
+      // No relation yet: a full block is a BLOCKED row whose pre-block status is DECLINED,
+      // so unblocking never turns it into a match; a partial block keeps it DECLINED.
       await this.matchRepo.save(this.matchRepo.create({
         senderId: userId,
         receiverId: otherUserId,
-        status: MatchStatus.BLOCKED,
-        statusBeforeBlock: MatchStatus.DECLINED,
+        status: scope === 'all' ? MatchStatus.BLOCKED : MatchStatus.DECLINED,
+        statusBeforeBlock: scope === 'all' ? MatchStatus.DECLINED : null,
         blockedByUserId: userId,
+        blockScope: scope,
       }));
     }
-    return { blocked: true };
+    return { blocked: true, scope };
   }
 
   /** Files a report from the call screen into the super-admin complaints queue. */
@@ -240,7 +239,7 @@ export class DirectCallsService {
         { senderId: receiverId, receiverId: callerId },
       ],
     });
-    if (relation?.status === MatchStatus.BLOCKED) throw new ForbiddenException('You cannot call this user.');
+    if (callsBlocked(relation)) throw new ForbiddenException('You cannot call this user.');
     if (!receiver.allowDirectCalls && relation?.status !== MatchStatus.MATCHED) {
       throw new ForbiddenException('This user only accepts calls from their matches.');
     }

@@ -50,7 +50,7 @@ export class SupportController {
   }
 
   @UseGuards(AuthGuard('jwt'), RolesGuard)
-  @Roles('super_admin')
+  @Roles('admin', 'super_admin')
   @Delete('tickets/:id')
   deleteTicket(@Param('id') id: string) {
     return this.supportService.deleteTicket(Number(id));

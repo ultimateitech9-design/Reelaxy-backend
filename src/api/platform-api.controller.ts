@@ -20,6 +20,9 @@ import { UserActivityService } from '../users/user-activity.service';
 import { AdminAccountsService } from '../admin/admin-accounts.service';
 import { AdminAgentStatusDto } from '../admin/admin-agent-status.dto';
 import { PaymentsService } from '../payments/payments.service';
+import { CoinTransaction } from '../users/coin-transaction.entity';
+import { VideoCall } from '../messages/video-call.entity';
+import { DEFAULT_DIRECT_CALL_SETTINGS, DirectCallSettings } from '../direct-calls/direct-calls.service';
 
 export class CreatePlatformUserDto {
   @IsString()
@@ -301,6 +304,33 @@ export class PlatformApiController {
     }]));
   }
 
+  // ---- Reelaxy wallet model: revenue = completed coin recharges (1 coin = ₹1). ----
+  private async walletRecharges() {
+    const rows = await this.userRepo.manager.getRepository(CoinTransaction).find({
+      where: { type: 'recharge', status: 'completed' },
+      order: { createdAt: 'ASC' },
+    });
+    const userIds = [...new Set(rows.map((row) => row.userId).filter(Boolean))] as string[];
+    const users = userIds.length ? await this.userRepo.find({ where: { id: In(userIds) }, select: ['id', 'name'] }) : [];
+    const names = new Map(users.map((user) => [user.id, user.name]));
+    return rows.map((row) => ({
+      id: row.id,
+      userId: row.userId,
+      user: (row.userId && names.get(row.userId)) || 'Deleted user',
+      coins: row.userCoins || row.grossCoins,
+      amount: Number(row.amountPaise || 0) / 100,
+      couponCode: row.couponCode,
+      createdAt: row.createdAt,
+    }));
+  }
+
+  private async callSettings(): Promise<DirectCallSettings> {
+    const row = await this.userRepo.manager.getRepository(PlatformSetting).findOne({ where: { key: 'direct_calls' } });
+    return { ...DEFAULT_DIRECT_CALL_SETTINGS, ...((row?.value || {}) as Partial<DirectCallSettings>) };
+  }
+
+  private packLabel(coins: number) { return `${coins.toLocaleString('en-IN')} coins`; }
+
   private dayKey(date: Date) {
     return date.toLocaleString('en-US', { weekday: 'short' });
   }
@@ -428,51 +458,38 @@ export class PlatformApiController {
 
   @Get('dashboard')
   async dashboard(@Req() request: any) {
-    const agents = this.requestUser(request).role === 'super_admin'
+    const isSuperAdmin = this.requestUser(request).role === 'super_admin';
+    const agents = isSuperAdmin
       ? await this.userRepo.manager.getRepository(Agent).find({ where: { status: Not('deleted') }, select: ['id', 'createdAt', 'status'] }) : [];
-    const [totalUsers, activeUsers, premiumUsers, matchesDone, pendingReports, revenue, users, matches, payments, reports] = await Promise.all([
-    this.userRepo.count(),
-    this.userRepo.count({ where: { status: 'active' } }),
-    this.userRepo.createQueryBuilder('user')
-      .where('user.plan IN (:...paidPlans)', { paidPlans: ['gold', 'platinum'] })
-      .andWhere('(user.planExpiresAt IS NULL OR user.planExpiresAt > :now)', { now: new Date() })
-      .getCount(),
-    this.matchRepo.count({ where: { status: MatchStatus.MATCHED } }),
-    this.contactRepo.count({ where: { status: 'open' } }),
-    this.paymentRepo
-      .createQueryBuilder('payment')
-      .select('COALESCE(SUM(payment.amount), 0)', 'total')
-      .where('payment.status = :status', { status: 'successful' })
-      .getRawOne(),
-    this.userRepo.find({ select: ['createdAt', 'plan', 'planExpiresAt', 'status'] }),
-    this.matchRepo.find({ select: ['createdAt'] }),
-    this.paymentRepo.find({ where: { status: 'successful' }, select: ['amount', 'createdAt'] }),
-    this.contactRepo.find({ select: ['createdAt', 'status'] }),
+    const callRepo = this.userRepo.manager.getRepository(VideoCall);
+    const [totalUsers, onlineUsers, pendingReports, users, calls, reports, recharges, coinsInWallets] = await Promise.all([
+      this.userRepo.count({ where: { role: 'user' } }),
+      this.userRepo.count({ where: { role: 'user', isOnline: true } }),
+      this.contactRepo.count({ where: { status: 'open' } }),
+      this.userRepo.find({ where: { role: 'user' }, select: ['createdAt'] }),
+      callRepo.find({ select: ['createdAt', 'status'] }),
+      this.contactRepo.find({ select: ['createdAt', 'status'] }),
+      this.walletRecharges(),
+      this.userRepo.createQueryBuilder('user').select('COALESCE(SUM(user.coinBalance), 0)', 'total').where("user.role = 'user'").getRawOne(),
     ]);
-    const totalRevenue = Number(revenue?.total || 0);
     const now = Date.now();
     const currentStart = now - 30 * 86400000;
     const previousStart = now - 60 * 86400000;
-    const countPeriod = <T extends { createdAt: Date }>(rows: T[], start: number, end: number) =>
-      rows.filter((row) => new Date(row.createdAt).getTime() >= start && new Date(row.createdAt).getTime() < end).length;
-    const sumPeriod = (rows: Payment[], start: number, end: number) =>
-      rows.filter((row) => new Date(row.createdAt).getTime() >= start && new Date(row.createdAt).getTime() < end)
-        .reduce((sum, row) => sum + Number(row.amount), 0);
-    const monthly: Record<string, { m: string; users: number; matches: number }> = {};
+    const inPeriod = (date: Date, start: number, end: number) => { const t = new Date(date).getTime(); return t >= start && t < end; };
+    const countPeriod = <T extends { createdAt: Date }>(rows: T[], start: number, end: number) => rows.filter((row) => inPeriod(row.createdAt, start, end)).length;
+    const revenueIn = (start: number, end: number) => recharges.filter((row) => inPeriod(row.createdAt, start, end)).reduce((sum, row) => sum + row.amount, 0);
+    const totalRevenue = recharges.reduce((sum, row) => sum + row.amount, 0);
+    const payingUsers = new Set(recharges.map((row) => row.userId)).size;
+
+    const monthly: Record<string, { m: string; users: number; calls: number }> = {};
     const ensureMonth = (date: Date) => {
-      const key = date.toLocaleString('en-US', { month: 'short' });
-      monthly[key] ||= { m: key, users: 0, matches: 0 };
+      const key = new Date(date).toLocaleString('en-US', { month: 'short' });
+      monthly[key] ||= { m: key, users: 0, calls: 0 };
       return monthly[key];
     };
-    users.forEach((user) => {
-      ensureMonth(user.createdAt).users += 1;
-    });
-    matches.forEach((match) => {
-      ensureMonth(match.createdAt).matches += 1;
-    });
-    agents.forEach(agent => { ensureMonth(agent.createdAt).users += 1; });
-    const growth = Object.values(monthly);
-    const agentStats = this.requestUser(request).role === 'super_admin' ? [
+    users.forEach((user) => { ensureMonth(user.createdAt).users += 1; });
+    calls.forEach((call) => { ensureMonth(call.createdAt).calls += 1; });
+    const agentStats = isSuperAdmin ? [
       { label: 'Agent-created Users', value: String(await this.userRepo.countBy({ createdByAgentId: Not(IsNull()) })), delta: 'Live DB' },
       { label: 'Registered Agents', value: String(agents.length), delta: 'Live DB' },
     ] : [];
@@ -480,19 +497,20 @@ export class PlatformApiController {
     return {
       stats: [
         ...agentStats,
-        { label: 'Total Users', value: String(totalUsers + agents.length), delta: this.periodDelta(countPeriod([...users, ...agents], currentStart, now), countPeriod([...users, ...agents], previousStart, currentStart)) },
-        { label: 'Active Users', value: String(activeUsers + agents.filter(agent => agent.status === 'active').length), delta: 'Live DB' },
-        { label: 'Matches Done', value: String(matchesDone), delta: this.periodDelta(countPeriod(matches, currentStart, now), countPeriod(matches, previousStart, currentStart)) },
-        { label: 'Total Revenue', value: `\u20B9${totalRevenue.toLocaleString()}`, delta: this.periodDelta(sumPeriod(payments, currentStart, now), sumPeriod(payments, previousStart, currentStart)) },
+        { label: 'Total Users', value: String(totalUsers), delta: this.periodDelta(countPeriod(users, currentStart, now), countPeriod(users, previousStart, currentStart)) },
+        { label: 'Online Now', value: String(onlineUsers), delta: 'Live' },
+        { label: 'Calls', value: String(calls.length), delta: this.periodDelta(countPeriod(calls, currentStart, now), countPeriod(calls, previousStart, currentStart)) },
+        { label: 'Wallet Revenue', value: `\u20B9${totalRevenue.toLocaleString('en-IN')}`, delta: this.periodDelta(revenueIn(currentStart, now), revenueIn(previousStart, currentStart)) },
+        { label: 'Paying Users', value: String(payingUsers), delta: 'Live DB' },
+        { label: 'Coins in Wallets', value: Number(coinsInWallets?.total || 0).toLocaleString('en-IN'), delta: 'Live DB' },
         { label: 'Pending Reports', value: String(pendingReports), delta: this.periodDelta(countPeriod(reports, currentStart, now), countPeriod(reports, previousStart, currentStart)) },
-        { label: 'Premium Users', value: String(premiumUsers), delta: this.periodDelta(countPeriod(users.filter((user) => user.plan !== 'free' && (!user.planExpiresAt || new Date(user.planExpiresAt).getTime() > now)), currentStart, now), countPeriod(users.filter((user) => user.plan !== 'free' && (!user.planExpiresAt || new Date(user.planExpiresAt).getTime() > now)), previousStart, currentStart)) },
       ],
-      growth,
+      growth: Object.values(monthly),
     };
   }
 
   @Get('agents')
-  @Roles('super_admin')
+  @Roles('admin', 'super_admin')
   agents(@Query('search') search?: string, @Query('page') page?: string, @Query('limit') limit?: string) {
     return this.adminAccounts.agents(search, page, limit);
   }
@@ -504,19 +522,19 @@ export class PlatformApiController {
   }
 
   @Get('agents/:id')
-  @Roles('super_admin')
+  @Roles('admin', 'super_admin')
   agentDetails(@Param('id', ParseUUIDPipe) id: string, @Query('page') page?: string, @Query('limit') limit?: string) {
     return this.adminAccounts.agentDetails(id, page, limit);
   }
 
   @Patch('agents/:id/status')
-  @Roles('super_admin')
+  @Roles('admin', 'super_admin')
   agentStatus(@Param('id', ParseUUIDPipe) id: string, @Body() body: AdminAgentStatusDto, @Req() request: any) {
     return this.adminAccounts.manageAgent(id, body.status, this.requestUser(request).userId);
   }
 
   @Delete('agents/:id')
-  @Roles('super_admin')
+  @Roles('admin', 'super_admin')
   deleteAgent(@Param('id', ParseUUIDPipe) id: string, @Req() request: any) {
     return this.adminAccounts.manageAgent(id, 'deleted', this.requestUser(request).userId);
   }
@@ -593,7 +611,7 @@ export class PlatformApiController {
   }
 
   @Post('users')
-  @Roles('super_admin')
+  @Roles('admin', 'super_admin')
   async createUser(@Body() body: CreatePlatformUserDto) {
     const existing = await this.userRepo.findOne({ where: { email: body.email } });
     if (existing) return { message: 'A user with this email already exists.', user: existing };
@@ -629,7 +647,9 @@ export class PlatformApiController {
       city: user.city,
       isVerified: user.isVerified,
       plan: user.plan,
-      account: user.plan === 'platinum' ? 'Diamond' : user.plan === 'gold' ? 'Gold' : 'Free',
+      account: 'Member',
+      coinBalance: user.coinBalance ?? 0,
+      earnedCoinBalance: user.earnedCoinBalance ?? 0,
       ...(actor.role === 'super_admin' || actor.role === 'admin' ? { role: user.role } : {}),
       status: this.statusLabel(user.status),
       joined: user.createdAt,
@@ -658,8 +678,14 @@ export class PlatformApiController {
   }
 
   @Patch('users/:id')
-  @Roles('super_admin')
-  async updateUser(@Param('id') id: string, @Body() body: UpdatePlatformUserDto) {
+  @Roles('admin', 'super_admin')
+  async updateUser(@Param('id') id: string, @Body() body: UpdatePlatformUserDto, @Req() request: any) {
+    // Admins manage members only: staff accounts and staff roles stay with Super Admin.
+    if (this.requestUser(request).role === 'admin') {
+      const target = await this.userRepo.findOne({ where: { id }, select: ['id', 'role'] });
+      if (target && target.role !== 'user') throw new ForbiddenException('Only Super Admin can change staff accounts.');
+      if (body.role && body.role !== 'user') throw new ForbiddenException('Only Super Admin can assign staff roles.');
+    }
     const user = await this.userRepo.findOne({ where: { id } });
     if (!user) throw new NotFoundException('User not found.');
 
@@ -737,17 +763,18 @@ export class PlatformApiController {
   }
 
   @Delete('users/:id')
-  @Roles('super_admin')
-  async deleteUser(@Param('id') id: string) {
+  @Roles('admin', 'super_admin')
+  async deleteUser(@Param('id') id: string, @Req() request: any) {
     const user = await this.userRepo.findOne({ where: { id } });
     if (!user) throw new NotFoundException('User not found.');
+    if (this.requestUser(request).role === 'admin' && user.role !== 'user') throw new ForbiddenException('Only Super Admin can delete staff accounts.');
     await this.userRepo.remove(user);
     await this.audit('Users', 'Delete', `Deleted user account ${user.email}`);
     return { success: true };
   }
 
   @Get('users/:id/activity')
-  @Roles('super_admin')
+  @Roles('admin', 'super_admin')
   async activity(@Param('id') id: string, @Query('page') page?: string) {
     if (!await this.userRepo.existsBy({ id })) throw new NotFoundException('User not found.');
     return this.userActivity.get(id, Number(page || 1));
@@ -832,45 +859,35 @@ export class PlatformApiController {
 
   @Get('payments')
   async payments() {
-    // A browser can close immediately after Razorpay accepts a payment. Recheck
-    // recent pending orders here, so the billing view repairs that interruption
-    // even if the checkout callback was missed.
-    void this.paymentsService.reconcileRecentPendingPayments().catch(() => undefined);
-    const plans = await this.planRepo.find({ order: { sortOrder: 'ASC' } });
-    const users = await this.userRepo.find({ select: ['plan'] });
-    const subscriberCounts = users.reduce<Record<string, number>>((acc, user) => {
-      acc[user.plan] = (acc[user.plan] || 0) + 1;
-      return acc;
-    }, {});
-    const transactions = await this.paymentRepo.find({
-      relations: ['user'],
-      order: { createdAt: 'DESC' },
-      take: 100,
-    });
-
+    const [settings, recharges] = await Promise.all([this.callSettings(), this.walletRecharges()]);
+    const packCoins = [...new Set([...settings.packs, ...recharges.map((row) => row.coins)])].sort((a, b) => a - b);
+    const recent = [...recharges].reverse().slice(0, 200);
     return {
-      plans: plans.map((plan) => {
-        const details = this.normalizeSubscriptionPlan(plan);
+      // Coin packs (the only plan on Reelaxy): purchases and revenue per pack.
+      plans: packCoins.map((coins) => {
+        const sold = recharges.filter((row) => row.coins === coins);
         return {
-          id: plan.id,
-          name: details.displayName,
-          key: plan.name,
-          currency: details.currency,
-          price: details.price === 0 ? `${this.currencySymbol(details.currency)}0` : `${this.currencySymbol(details.currency)}${details.price.toFixed(2)}`,
-          rawPrice: details.price,
-          period: 'monthly',
-          features: details.features,
-          subscribers: subscriberCounts[plan.name] || 0,
-          status: plan.status,
+          id: `pack-${coins}`,
+          name: this.packLabel(coins),
+          key: `pack-${coins}`,
+          currency: 'INR',
+          price: `\u20B9${coins.toLocaleString('en-IN')}`,
+          rawPrice: coins,
+          period: 'one-time',
+          features: [],
+          subscribers: sold.length,
+          revenue: sold.reduce((sum, row) => sum + row.amount, 0),
+          status: settings.packs.includes(coins) ? 'active' : 'retired',
         };
       }),
-      transactions: transactions.map((payment) => ({
-        id: payment.id,
-        user: payment.user?.name || 'Deleted user',
-        plan: payment.planName.startsWith('boost:') ? `Profile Boost - ${payment.planName.slice(6).replace(/_/g, ' ')}` : payment.planName,
-        amount: Number(payment.amount),
-        status: payment.status,
-        date: payment.createdAt.toISOString().split('T')[0],
+      transactions: recent.map((row) => ({
+        id: row.id,
+        user: row.user,
+        plan: this.packLabel(row.coins) + (row.couponCode ? ` (coupon ${row.couponCode})` : ''),
+        amount: row.amount,
+        status: 'successful',
+        date: new Date(row.createdAt).toISOString().split('T')[0],
+        refundable: false,
       })),
     };
   }
@@ -1312,55 +1329,39 @@ export class PlatformApiController {
   @Get('sales/overview')
   @Roles('sales', 'admin', 'super_admin')
   async salesOverview() {
-    const payments = await this.paymentRepo.find({ relations: ['user'], order: { createdAt: 'ASC' } });
-    const users = await this.userRepo.find();
-    const successfulPayments = payments.filter((payment) => payment.status === 'successful');
+    const [recharges, users] = await Promise.all([
+      this.walletRecharges(),
+      this.userRepo.find({ where: { role: 'user' }, select: ['id', 'createdAt'] }),
+    ]);
     const now = Date.now();
     const currentStart = now - 30 * 86400000;
     const previousStart = now - 60 * 86400000;
-    const premiumUsers = users.filter((user) => user.plan !== 'free');
-    const currentPremiumSignups = premiumUsers.filter((user) => new Date(user.createdAt).getTime() >= currentStart).length;
-    const previousPremiumSignups = premiumUsers.filter((user) => {
-      const created = new Date(user.createdAt).getTime();
-      return created >= previousStart && created < currentStart;
-    }).length;
-    const paymentCountByUser = successfulPayments.reduce<Record<string, number>>((acc, payment) => {
-      if (payment.userId) acc[payment.userId] = (acc[payment.userId] || 0) + 1;
-      return acc;
-    }, {});
-    const payingUserIds = Object.keys(paymentCountByUser);
-    const renewedUserIds = payingUserIds.filter((userId) => paymentCountByUser[userId] > 1);
-    const renewalRate = payingUserIds.length ? (renewedUserIds.length / payingUserIds.length) * 100 : null;
-    const conversionRate = users.length ? (premiumUsers.length / users.length) * 100 : 0;
+    const inPeriod = (date: Date, start: number, end: number) => { const t = new Date(date).getTime(); return t >= start && t < end; };
+    const revenueIn = (start: number, end: number) => recharges.filter((r) => inPeriod(r.createdAt, start, end)).reduce((sum, r) => sum + r.amount, 0);
+    const buyersIn = (start: number, end: number) => new Set(recharges.filter((r) => inPeriod(r.createdAt, start, end)).map((r) => r.userId)).size;
+    const perUser = recharges.reduce<Record<string, number>>((acc, r) => { if (r.userId) acc[r.userId] = (acc[r.userId] || 0) + 1; return acc; }, {});
+    const payingUsers = Object.keys(perUser).length;
+    const repeatBuyers = Object.values(perUser).filter((n) => n > 1).length;
+    const delta = (a: number, b: number) => Number(this.periodDelta(a, b).replace('%', '')) || 0;
     const revenueData: Record<string, { day: string; revenue: number; signups: number }> = {};
-    payments.forEach((payment) => {
-      const day = this.dayKey(payment.createdAt);
-      revenueData[day] ||= { day, revenue: 0, signups: 0 };
-      revenueData[day].revenue += Number(payment.amount);
-    });
-    users.forEach((user) => {
-      const day = this.dayKey(user.createdAt);
-      revenueData[day] ||= { day, revenue: 0, signups: 0 };
-      revenueData[day].signups += 1;
-    });
-    const planSplit = Object.entries(users.reduce<Record<string, number>>((acc, user) => {
-      acc[user.plan] = (acc[user.plan] || 0) + 1;
-      return acc;
-    }, {})).map(([name, value]) => ({ name, value }));
+    recharges.forEach((r) => { const day = this.dayKey(r.createdAt); revenueData[day] ||= { day, revenue: 0, signups: 0 }; revenueData[day].revenue += r.amount; });
+    users.forEach((u) => { const day = this.dayKey(u.createdAt); revenueData[day] ||= { day, revenue: 0, signups: 0 }; revenueData[day].signups += 1; });
+    const packSplit = Object.entries(recharges.reduce<Record<string, number>>((acc, r) => { const k = this.packLabel(r.coins); acc[k] = (acc[k] || 0) + 1; return acc; }, {}))
+      .map(([name, value]) => ({ name, value }));
     return {
       kpis: [
-        { label: 'Total Subscriptions', value: String(premiumUsers.length), delta: Number(this.periodDelta(currentPremiumSignups, previousPremiumSignups).replace('%', '')) },
-        { label: 'New Premium Users', value: String(currentPremiumSignups), delta: Number(this.periodDelta(currentPremiumSignups, previousPremiumSignups).replace('%', '')) },
-        { label: 'Renewal Rate', value: renewalRate === null ? '\u2014' : `${renewalRate.toFixed(1)}%`, delta: 0 },
-        { label: 'Conversion Rate', value: `${conversionRate.toFixed(1)}%`, delta: 0 },
+        { label: 'Wallet Revenue (30d)', value: `\u20B9${revenueIn(currentStart, now).toLocaleString('en-IN')}`, delta: delta(revenueIn(currentStart, now), revenueIn(previousStart, currentStart)) },
+        { label: 'Buyers (30d)', value: String(buyersIn(currentStart, now)), delta: delta(buyersIn(currentStart, now), buyersIn(previousStart, currentStart)) },
+        { label: 'Repeat Buyers', value: payingUsers ? `${((repeatBuyers / payingUsers) * 100).toFixed(1)}%` : '\u2014', delta: 0 },
+        { label: 'Paying Users', value: users.length ? `${((payingUsers / users.length) * 100).toFixed(1)}%` : '0%', delta: 0 },
       ],
-      revenueData: Object.values(revenueData),
-      planSplit,
-      recentUpgrades: successfulPayments.slice(-5).reverse().map((p) => ({
-        name: p.user?.name || 'Deleted user',
-        plan: p.planName,
-        amt: `${this.currencySymbol(p.currency)}${Number(p.amount).toFixed(2)}`,
-        t: p.createdAt.toLocaleString(),
+      revenueData: Object.values(revenueData).sort((a, b) => a.day.localeCompare(b.day)),
+      planSplit: packSplit,
+      recentUpgrades: [...recharges].reverse().slice(0, 5).map((r) => ({
+        name: r.user,
+        plan: this.packLabel(r.coins),
+        amt: `\u20B9${r.amount.toLocaleString('en-IN')}`,
+        t: new Date(r.createdAt).toLocaleString(),
       })),
     };
   }
@@ -1368,29 +1369,37 @@ export class PlatformApiController {
   @Get('sales/retention')
   @Roles('sales', 'admin', 'super_admin')
   async salesRetention() {
-    const users = await this.userRepo.find({ select: ['plan', 'status', 'isVerified'] });
-    const plans = [
-      { key: 'free', label: 'Free' },
-      { key: 'gold', label: 'Gold' },
-      { key: 'platinum', label: 'Diamond' },
-    ].map((plan) => {
-      const members = users.filter((user) => String(user.plan || 'free').toLowerCase() === plan.key);
+    const [users, recharges] = await Promise.all([
+      this.userRepo.find({ where: { role: 'user' }, select: ['id', 'status', 'isVerified'] }),
+      this.walletRecharges(),
+    ]);
+    const perUser = recharges.reduce<Record<string, number>>((acc, r) => { if (r.userId) acc[r.userId] = (acc[r.userId] || 0) + 1; return acc; }, {});
+    const segments = [
+      { key: 'none', label: 'No recharge yet', test: (n: number) => n === 0 },
+      { key: 'once', label: 'Recharged once', test: (n: number) => n === 1 },
+      { key: 'repeat', label: 'Repeat buyers', test: (n: number) => n > 1 },
+    ].map(({ key, label, test }) => {
+      const members = users.filter((user) => test(perUser[user.id] || 0));
       return {
-        ...plan,
+        key, label,
         total: members.length,
         active: members.filter((user) => String(user.status || '').toLowerCase() === 'active').length,
         verified: members.filter((user) => Boolean(user.isVerified)).length,
       };
     });
-    const premiumUsers = plans.filter((plan) => plan.key !== 'free').reduce((sum, plan) => sum + plan.total, 0);
-    const activePremium = plans.filter((plan) => plan.key !== 'free').reduce((sum, plan) => sum + plan.active, 0);
-    return { totalUsers: users.length, premiumUsers, activePremium, plans };
+    const paying = segments.filter((s) => s.key !== 'none');
+    return {
+      totalUsers: users.length,
+      premiumUsers: paying.reduce((sum, s) => sum + s.total, 0),
+      activePremium: paying.reduce((sum, s) => sum + s.active, 0),
+      plans: segments,
+    };
   }
   @Get('sales/trends')
   @Roles('sales', 'admin', 'super_admin')
   async salesTrends() {
-    const payments = await this.paymentRepo.find({ order: { createdAt: 'ASC' } });
-    const successful = payments.filter((payment) => payment.status === 'successful');
+    // Wallet recharges are Reelaxy's only sales.
+    const successful = (await this.walletRecharges()).map((row) => ({ amount: row.amount, createdAt: new Date(row.createdAt) }));
     const now = new Date();
     const monthKey = (date: Date) => date.toLocaleString('en-US', { month: 'short' });
     const weekOfMonth = (date: Date) => `W${Math.ceil(date.getDate() / 7)}`;
@@ -1433,27 +1442,34 @@ export class PlatformApiController {
   @Get('sales/plans')
   @Roles('sales', 'admin', 'super_admin')
   async salesPlans() {
-    const plans = await this.planRepo.find({ order: { sortOrder: 'ASC' } });
-    const users = await this.userRepo.find({ select: ['plan', 'city'] });
+    const [settings, recharges, users] = await Promise.all([
+      this.callSettings(),
+      this.walletRecharges(),
+      this.userRepo.find({ where: { role: 'user' }, select: ['city'] }),
+    ]);
+    const minutes = (coins: number, rate: number) => (rate > 0 ? Math.floor(coins / rate) : 0);
     return {
-      plans: plans.map((plan) => {
-        const details = this.normalizeSubscriptionPlan(plan);
+      plans: settings.packs.map((coins) => {
+        const sold = recharges.filter((row) => row.coins === coins);
         return {
-          id: plan.id,
-          key: plan.name,
-          name: details.displayName,
-          price: details.price,
-          currency: details.currency,
-          features: details.features,
-          status: plan.status,
-          subscribers: users.filter((u) => u.plan === plan.name).length,
+          id: `pack-${coins}`,
+          key: `pack-${coins}`,
+          name: this.packLabel(coins),
+          price: coins,
+          currency: 'INR',
+          features: [
+            `~${minutes(coins, settings.videoRatePerMinute)} min video or ~${minutes(coins, settings.audioRatePerMinute)} min audio`,
+            `${sold.length} purchases \u00B7 \u20B9${sold.reduce((sum, row) => sum + row.amount, 0).toLocaleString('en-IN')} revenue`,
+          ],
+          status: 'active',
+          subscribers: sold.length,
         };
       }),
       topMarkets: Object.entries(users.reduce<Record<string, number>>((acc, user) => {
         const city = user.city || 'Unknown';
         acc[city] = (acc[city] || 0) + 1;
         return acc;
-      }, {})).map(([city, value]) => ({ city, value })).slice(0, 8),
+      }, {})).map(([city, value]) => ({ city, value })).sort((a, b) => b.value - a.value).slice(0, 8),
     };
   }
 

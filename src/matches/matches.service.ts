@@ -1,3 +1,4 @@
+import { activeBlockScope, applyBlock, BlockScope, removeBlock } from './block-scope';
 import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
@@ -192,7 +193,7 @@ export class MatchesService {
       query.andWhere('match.status = :status AND match.receiverId = :userId', { status: MatchStatus.PENDING, userId });
     } else if (filter === 'blocked') {
       query.andWhere(
-        'match.status = :status AND (match.blockedByUserId = :userId OR (match.blockedByUserId IS NULL AND match.senderId = :userId))',
+        "(match.status = :status OR match.blockScope IN ('calls', 'messages')) AND (match.blockedByUserId = :userId OR (match.blockedByUserId IS NULL AND match.senderId = :userId))",
         { status: MatchStatus.BLOCKED, userId },
       );
     } else {
@@ -255,7 +256,7 @@ export class MatchesService {
       count(MatchStatus.PENDING, 'senderId'),
       count(MatchStatus.PENDING, 'receiverId'),
       this.matchesRepository.createQueryBuilder('match')
-        .where('match.status = :status', { status: MatchStatus.BLOCKED })
+        .where("(match.status = :status OR match.blockScope IN ('calls', 'messages'))", { status: MatchStatus.BLOCKED })
         .andWhere('(match.blockedByUserId = :userId OR (match.blockedByUserId IS NULL AND match.senderId = :userId))', { userId })
         .getCount(),
     ]);
@@ -330,21 +331,13 @@ export class MatchesService {
     return null;
   }
 
-  async blockMatch(id: string, blockerUserId: string): Promise<MatchRelation> {
+  async blockMatch(id: string, blockerUserId: string, scope: BlockScope = 'all'): Promise<MatchRelation> {
     const match = await this.matchesRepository.findOne({ where: { id } });
     if (!match) throw new NotFoundException('Match not found.');
     if (match.senderId !== blockerUserId && match.receiverId !== blockerUserId) {
       throw new ForbiddenException('You are not part of this match.');
     }
-    if (match.status === MatchStatus.BLOCKED) {
-      if (match.blockedByUserId === blockerUserId || (!match.blockedByUserId && match.senderId === blockerUserId)) return match;
-      throw new ForbiddenException('This user has blocked this conversation.');
-    }
-
-    match.statusBeforeBlock = match.status;
-    match.blockedByUserId = blockerUserId;
-    match.status = MatchStatus.BLOCKED;
-    return this.matchesRepository.save(match);
+    return this.matchesRepository.save(applyBlock(match, blockerUserId, scope));
   }
 
   async unblockMatch(id: string, userId: string): Promise<MatchRelation> {
@@ -353,15 +346,8 @@ export class MatchesService {
     if (match.senderId !== userId && match.receiverId !== userId) {
       throw new ForbiddenException('You are not part of this match.');
     }
-    if (match.status !== MatchStatus.BLOCKED) return match;
-
-    const blockerId = match.blockedByUserId || match.senderId;
-    if (blockerId !== userId) throw new ForbiddenException('Only the user who blocked this conversation can unblock it.');
-
-    match.status = match.statusBeforeBlock || MatchStatus.MATCHED;
-    match.blockedByUserId = null;
-    match.statusBeforeBlock = null;
-    return this.matchesRepository.save(match);
+    if (!activeBlockScope(match)) return match;
+    return this.matchesRepository.save(removeBlock(match, userId));
   }
   async respond(id: string, action: 'accept' | 'decline', userId?: string): Promise<MatchRelation> {
     const match = await this.matchesRepository.findOne({ where: { id } });

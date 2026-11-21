@@ -1,3 +1,4 @@
+import { parseBlockScope } from '../matches/block-scope';
 import { Body, Controller, Get, Patch, Post, Request, UseGuards } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
 import { Roles, RolesGuard } from '../auth/roles.guard';
@@ -22,8 +23,8 @@ export class DirectCallsController {
 
   /** Block someone from the call screen (works without a match). */
   @Post('block')
-  block(@Request() req: any, @Body('userId') userId: string) {
-    return this.directCalls.blockUser(req.user.userId, userId);
+  block(@Request() req: any, @Body('userId') userId: string, @Body('scope') scope?: string) {
+    return this.directCalls.blockUser(req.user.userId, userId, parseBlockScope(scope));
   }
 
   /** Report someone from the call screen; goes to super-admin complaints. */
@@ -34,21 +35,21 @@ export class DirectCallsController {
 
   @Get('admin/settings')
   @UseGuards(RolesGuard)
-  @Roles('super_admin')
+  @Roles('admin', 'super_admin')
   adminSettings() {
     return this.directCalls.settings();
   }
 
   @Get('admin/stats')
   @UseGuards(RolesGuard)
-  @Roles('super_admin')
+  @Roles('admin', 'super_admin')
   adminStats() {
     return this.directCalls.adminStats();
   }
 
   @Patch('admin/settings')
   @UseGuards(RolesGuard)
-  @Roles('super_admin')
+  @Roles('admin', 'super_admin')
   updateAdminSettings(@Body() body: Partial<DirectCallSettings>) {
     return this.directCalls.updateSettings(body);
   }
