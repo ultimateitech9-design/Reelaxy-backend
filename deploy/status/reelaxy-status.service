@@ -1,0 +1,6 @@
+[Unit]
+Description=Reelaxy deploy status: compare GitHub main with production
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 /opt/reelaxy/Reelaxy-backend/deploy/status/status.py check

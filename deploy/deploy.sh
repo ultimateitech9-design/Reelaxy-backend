@@ -19,6 +19,16 @@ mkdir -p "$STATUS_DIR"
 # Publish the status page itself (served by nginx at /deploy-status).
 install -m 644 "$ROOT/Reelaxy-backend/deploy/status/index.html" "$STATUS_DIR/index.html"
 status() { python3 "$ROOT/Reelaxy-backend/deploy/status/status.py" "$@" || true; }
+# Keep the "GitHub main vs production" checker (systemd timer, every 60 s) installed and current.
+install_timer() {
+  local src="$ROOT/Reelaxy-backend/deploy/status" changed=0 unit
+  for unit in reelaxy-status.service reelaxy-status.timer; do
+    if ! cmp -s "$src/$unit" "/etc/systemd/system/$unit"; then install -m 644 "$src/$unit" "/etc/systemd/system/$unit"; changed=1; fi
+  done
+  if (( changed )); then systemctl daemon-reload; fi
+  systemctl enable --now reelaxy-status.timer >/dev/null 2>&1 || true
+}
+install_timer || true
 targets=()
 mark() { for t in "${targets[@]}"; do status "$t" "$@"; done; }
 trap 'mark failed "${STEP:-deploy}"' ERR

@@ -4,59 +4,82 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex, nofollow">
-<title>Reelaxy Deploy Status</title>
+<title>Reelaxy Deployments</title>
 <style>
-  :root { --bg:#08080f; --card:#11111b; --line:rgba(255,255,255,.08); --text:#f4f4f8; --mute:rgba(255,255,255,.55);
-          --ok:#34d399; --run:#a78bfa; --bad:#fb7185; --grad:linear-gradient(90deg,#8b5cf6,#ec4899,#f97316); }
+  :root { --bg:#08080c; --card:#121218; --line:rgba(255,255,255,.08); --text:#f4f4f8; --mute:rgba(255,255,255,.55);
+          --ok:#4ade80; --run:#a78bfa; --warn:#fbbf24; --bad:#fb7185; --sha:#f9a8d4; }
   * { box-sizing:border-box; }
-  body { margin:0; background:var(--bg); color:var(--text); font:14px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif; }
+  body { margin:0; min-height:100vh; background:var(--bg); color:var(--text); font:15px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif; }
   body::before { content:""; position:fixed; inset:0; pointer-events:none;
-    background:radial-gradient(600px 300px at 15% -5%,rgba(139,92,246,.22),transparent),radial-gradient(500px 260px at 95% 0%,rgba(236,72,153,.16),transparent); }
-  .wrap { position:relative; max-width:880px; margin:0 auto; padding:28px 16px 48px; }
-  header { display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; }
-  .brand { font-weight:600; font-size:16px; text-decoration:none; color:var(--text); }
-  .brand span { background:var(--grad); -webkit-background-clip:text; background-clip:text; color:transparent; }
-  .upd { color:var(--mute); font-size:12px; }
-  .banner { margin-top:18px; display:flex; align-items:center; gap:10px; padding:12px 14px; border:1px solid var(--line); border-radius:14px; background:var(--card); font-weight:600; }
+    background:radial-gradient(700px 380px at 8% -8%,rgba(236,72,153,.18),transparent 70%),radial-gradient(600px 320px at 100% 0%,rgba(139,92,246,.12),transparent 70%); }
+  .wrap { position:relative; max-width:1120px; margin:0 auto; padding:56px 16px 48px; }
+  .eyebrow { margin:0; font-size:12px; font-weight:700; letter-spacing:.22em; color:#f472b6; }
+  .head { display:flex; align-items:flex-end; justify-content:space-between; gap:16px; flex-wrap:wrap; }
+  h1 { margin:8px 0 6px; font-size:clamp(30px,5vw,48px); line-height:1.05; font-weight:800; letter-spacing:-.03em; }
+  .sub { margin:0; color:var(--mute); }
+  .overall { display:inline-flex; align-items:center; gap:10px; padding:10px 16px; border:1px solid var(--line); border-radius:999px; background:rgba(255,255,255,.03); font-weight:700; font-size:14px; }
   .dot { width:9px; height:9px; border-radius:50%; flex:none; background:var(--mute); }
-  .ok .dot, .dot.ok { background:var(--ok); box-shadow:0 0 0 4px rgba(52,211,153,.15); }
+  .ok .dot, .dot.ok { background:var(--ok); box-shadow:0 0 0 4px rgba(74,222,128,.14); }
   .run .dot, .dot.run { background:var(--run); animation:p 1.2s infinite; }
-  .bad .dot, .dot.bad { background:var(--bad); box-shadow:0 0 0 4px rgba(251,113,133,.15); }
+  .warn .dot, .dot.warn { background:var(--warn); }
+  .bad .dot, .dot.bad { background:var(--bad); box-shadow:0 0 0 4px rgba(251,113,133,.14); }
   @keyframes p { 50% { box-shadow:0 0 0 6px rgba(167,139,250,.25); } }
-  .grid { margin-top:14px; display:grid; gap:12px; grid-template-columns:repeat(auto-fit,minmax(260px,1fr)); }
-  .card { border:1px solid var(--line); border-radius:14px; background:var(--card); padding:14px; }
-  .row { display:flex; align-items:center; justify-content:space-between; gap:8px; }
-  h2 { margin:0; font-size:13px; font-weight:600; }
-  h3 { margin:22px 0 8px; font-size:12px; font-weight:600; color:var(--mute); text-transform:uppercase; letter-spacing:.06em; }
-  .pill { font-size:11px; font-weight:600; padding:2px 8px; border-radius:999px; border:1px solid var(--line); display:inline-flex; align-items:center; gap:6px; }
-  .pill.ok { color:var(--ok); } .pill.run { color:var(--run); } .pill.bad { color:var(--bad); }
-  .kv { margin-top:10px; display:grid; grid-template-columns:auto 1fr; gap:4px 12px; font-size:12px; }
-  .kv dt { color:var(--mute); } .kv dd { margin:0; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-  code { font:12px ui-monospace,SFMono-Regular,Menlo,monospace; color:#f0abfc; }
-  .steps { margin-top:10px; display:flex; gap:4px; }
+  .grid { margin-top:28px; display:grid; gap:16px; grid-template-columns:repeat(auto-fit,minmax(300px,1fr)); }
+  .card { border:1px solid var(--line); border-radius:20px; background:linear-gradient(180deg,#15151c,#101016); padding:22px 22px 18px; }
+  .card-head { display:flex; align-items:center; justify-content:space-between; padding-bottom:16px; border-bottom:1px solid var(--line); }
+  h2 { margin:0; font-size:20px; font-weight:800; }
+  .badge { font-size:11px; font-weight:800; letter-spacing:.12em; padding:5px 10px; border-radius:999px; }
+  .badge.ok { color:var(--ok); background:rgba(74,222,128,.12); }
+  .badge.run { color:var(--run); background:rgba(167,139,250,.14); }
+  .badge.warn { color:var(--warn); background:rgba(251,191,36,.12); }
+  .badge.bad { color:var(--bad); background:rgba(251,113,133,.12); }
+  dl { margin:16px 0 0; display:grid; grid-template-columns:130px 1fr; gap:10px 12px; }
+  dt { color:var(--mute); } dd { margin:0; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  code { font:14px ui-monospace,SFMono-Regular,Menlo,monospace; color:var(--sha); }
+  .sync-ok { color:var(--ok); font-weight:700; } .sync-run { color:var(--run); font-weight:700; }
+  .sync-warn { color:var(--warn); font-weight:700; } .sync-bad { color:var(--bad); font-weight:700; }
+  .note { margin:14px 0 0; font-size:14px; }
+  .steps { margin-top:14px; display:flex; gap:4px; }
   .steps i { flex:1; height:4px; border-radius:4px; background:rgba(255,255,255,.08); }
-  .steps i.done { background:var(--grad); } .steps i.now { background:var(--run); animation:p 1.2s infinite; }
-  .checks { display:grid; gap:8px; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); }
-  .check { display:flex; align-items:center; gap:8px; border:1px solid var(--line); border-radius:12px; background:var(--card); padding:10px 12px; font-size:12px; }
-  .check b { font-weight:600; } .check span { margin-left:auto; color:var(--mute); }
-  table { width:100%; border-collapse:collapse; font-size:12px; }
-  .tbl { border:1px solid var(--line); border-radius:14px; background:var(--card); overflow-x:auto; }
-  th, td { text-align:left; padding:8px 12px; border-bottom:1px solid var(--line); white-space:nowrap; }
+  .steps i.done { background:linear-gradient(90deg,#8b5cf6,#ec4899,#f97316); } .steps i.now { background:var(--run); animation:p 1.2s infinite; }
+  .links { margin-top:22px; display:flex; flex-wrap:wrap; gap:10px; }
+  .links a { padding:9px 14px; border:1px solid var(--line); border-radius:12px; background:rgba(255,255,255,.03); color:var(--text); font-weight:700; font-size:14px; text-decoration:none; }
+  .links a:hover { border-color:rgba(236,72,153,.45); }
+  h3 { margin:34px 0 10px; font-size:12px; font-weight:700; letter-spacing:.14em; color:var(--mute); text-transform:uppercase; }
+  .checks { display:flex; flex-wrap:wrap; gap:10px; }
+  .check { display:flex; align-items:center; gap:8px; border:1px solid var(--line); border-radius:12px; background:var(--card); padding:8px 12px; font-size:13px; }
+  .check span { color:var(--mute); }
+  .tbl { border:1px solid var(--line); border-radius:16px; background:var(--card); overflow-x:auto; }
+  table { width:100%; border-collapse:collapse; font-size:13px; }
+  th, td { text-align:left; padding:9px 14px; border-bottom:1px solid var(--line); white-space:nowrap; }
   th { color:var(--mute); font-weight:500; } tr:last-child td { border-bottom:0; }
-  td.msg { max-width:280px; overflow:hidden; text-overflow:ellipsis; }
+  td.msg { max-width:340px; overflow:hidden; text-overflow:ellipsis; }
   .empty { padding:18px; text-align:center; color:var(--mute); }
+  .foot { margin-top:22px; font-size:13px; color:var(--mute); }
+  @media (max-width:520px) { dl { grid-template-columns:110px 1fr; } }
 </style>
 </head>
 <body>
 <div class="wrap">
-  <header>
-    <a class="brand" href="/">Reel<span>axy</span> · deploy status</a>
-    <div class="upd" id="upd">Loading…</div>
-  </header>
-
-  <div class="banner" id="banner"><i class="dot"></i><span>Checking…</span></div>
+  <p class="eyebrow">PRODUCTION MONITOR</p>
+  <div class="head">
+    <div>
+      <h1>Reelaxy Deployments</h1>
+      <p class="sub">GitHub main → automatic VPS build → health check</p>
+    </div>
+    <div class="overall" id="overall"><i class="dot"></i><span>Checking…</span></div>
+  </div>
 
   <div class="grid" id="services"></div>
+
+  <div class="links">
+    <a href="https://reelaxy.com" target="_blank" rel="noopener">Open website</a>
+    <a href="https://reelaxy.com/management" target="_blank" rel="noopener">Management</a>
+    <a href="https://api.reelaxy.com/api/health" target="_blank" rel="noopener">API health</a>
+    <a href="https://db.reelaxy.com" target="_blank" rel="noopener">Database</a>
+    <a href="https://github.com/ultimateitech9-design/Reelaxy-frontend/actions" target="_blank" rel="noopener">Frontend Actions</a>
+    <a href="https://github.com/ultimateitech9-design/Reelaxy-backend/actions" target="_blank" rel="noopener">Backend Actions</a>
+  </div>
 
   <h3>Live checks</h3>
   <div class="checks" id="checks"></div>
@@ -66,87 +89,80 @@
     <thead><tr><th>Service</th><th>Result</th><th>Commit</th><th>Message</th><th>Finished</th><th>Took</th></tr></thead>
     <tbody id="history"><tr><td colspan="6" class="empty">No deploys recorded yet.</td></tr></tbody>
   </table></div>
+
+  <p class="foot" id="foot">Auto-refreshes every 10 seconds · VPS checks GitHub every 60 seconds</p>
 </div>
 
 <script>
-const NAMES = { frontend: "Website", backend: "API & database" };
+const NAMES = { frontend: "Frontend", backend: "Backend" };
 const STEPS = ["pull", "build", "start", "done"];
 const CHECKS = [
   { name: "Website", url: "/", mode: "same-origin" },
   { name: "API", url: "https://api.reelaxy.com/api/health" },
 ];
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;" }[c]));
-const ago = (iso) => {
-  if (!iso) return "—";
-  const s = Math.max(0, (Date.now() - new Date(iso).getTime()) / 1000);
-  if (s < 60) return Math.round(s) + "s ago";
-  if (s < 3600) return Math.round(s / 60) + "m ago";
-  if (s < 86400) return Math.round(s / 3600) + "h ago";
-  return Math.round(s / 86400) + "d ago";
-};
-const when = (iso) => iso ? new Date(iso).toLocaleString("en-IN", { dateStyle: "medium", timeStyle: "short" }) : "—";
+const when = (iso) => iso ? new Date(iso).toLocaleString("en-GB", { day:"2-digit", month:"2-digit", year:"numeric", hour:"2-digit", minute:"2-digit", second:"2-digit", hour12:false }) : "—";
 const dur = (n) => n == null ? "—" : n >= 60 ? Math.floor(n / 60) + "m " + (n % 60) + "s" : n + "s";
-const cls = (state) => state === "success" ? "ok" : state === "deploying" ? "run" : state === "failed" ? "bad" : "";
-const label = (state) => ({ success: "Live", deploying: "Deploying", failed: "Failed" }[state] || "Unknown");
 
-function serviceCard(key, svc) {
-  const live = svc.live || {};
-  const deploying = svc.state === "deploying";
+/** Decide card state from the deploy record and the latest GitHub main commit. */
+function view(svc, gh) {
+  const live = svc.live?.sha, main = gh?.sha;
+  if (svc.state === "deploying") return { c: "run", badge: "DEPLOYING", sync: `<span class="sync-run">⟳ Deploying ${esc(svc.pending?.sha || "")}</span>`, note: `Building the latest commit — step: ${esc(svc.step)}` };
+  if (svc.state === "failed") return { c: "bad", badge: "FAILED", sync: `<span class="sync-bad">✕ Last deploy failed</span>`, note: `Failed at “${esc(svc.step)}”. The previous version is still running.` };
+  if (!main || !live) return { c: "ok", badge: "LIVE", sync: `<span class="sync-warn">… Waiting for first check</span>`, note: "GitHub main has not been checked yet" };
+  if (main === live) return { c: "ok", badge: "LIVE", sync: `<span class="sync-ok">✓ Up to date</span>`, note: "Production matches GitHub main" };
+  return { c: "warn", badge: "BEHIND", sync: `<span class="sync-warn">● New commit waiting</span>`, note: "GitHub main has a newer commit — a deploy should start shortly" };
+}
+
+function card(key, svc, gh) {
+  const v = view(svc, gh);
   const idx = STEPS.indexOf(svc.step);
-  const steps = deploying
-    ? `<div class="steps">${STEPS.map((_, i) => `<i class="${i < idx ? "done" : i === idx ? "now" : ""}"></i>`).join("")}</div>`
-    : "";
-  const pending = deploying && svc.pending
-    ? `<dt>Deploying</dt><dd><code>${esc(svc.pending.sha)}</code> ${esc(svc.pending.subject)}</dd><dt>Step</dt><dd>${esc(svc.step)} · started ${ago(svc.startedAt)}</dd>`
-    : svc.state === "failed"
-      ? `<dt>Failed at</dt><dd>${esc(svc.step)} · ${ago(svc.finishedAt)}</dd>`
-      : "";
-  return `<div class="card">
-    <div class="row"><h2>${esc(NAMES[key] || key)}</h2><span class="pill ${cls(svc.state)}"><i class="dot ${cls(svc.state)}"></i>${label(svc.state)}</span></div>
+  const steps = svc.state === "deploying"
+    ? `<div class="steps">${STEPS.map((_, i) => `<i class="${i < idx ? "done" : i === idx ? "now" : ""}"></i>`).join("")}</div>` : "";
+  return { c: v.c, html: `<div class="card">
+    <div class="card-head"><h2>${NAMES[key]}</h2><span class="badge ${v.c}">${v.badge}</span></div>
     ${steps}
-    <dl class="kv">
-      ${pending}
-      <dt>Live commit</dt><dd>${live.sha ? `<code>${esc(live.sha)}</code> ${esc(live.subject)}` : "—"}</dd>
-      <dt>Live since</dt><dd>${svc.liveSince ? `${when(svc.liveSince)} (${ago(svc.liveSince)})` : "—"}</dd>
-      <dt>Last build</dt><dd>${dur(svc.seconds)}</dd>
+    <dl>
+      <dt>Deployed</dt><dd>${svc.live?.sha ? `<code>${esc(svc.live.sha)}</code>` : "—"}</dd>
+      <dt>GitHub main</dt><dd>${gh?.sha ? `<code>${esc(gh.sha)}</code>` : "—"}</dd>
+      <dt>Sync</dt><dd>${v.sync}</dd>
+      <dt>Deployed at</dt><dd>${when(svc.liveSince)}</dd>
+      <dt>Last checked</dt><dd>${when(gh?.checkedAt)}${gh && gh.ok === false ? ` <span class="sync-warn">(GitHub unreachable)</span>` : ""}</dd>
     </dl>
-  </div>`;
+    <p class="note">${v.note}</p>
+  </div>` };
 }
 
 async function loadStatus() {
+  let data = {};
   try {
     const res = await fetch("/deploy-status.json", { cache: "no-store" });
-    if (!res.ok) throw new Error(res.status);
-    const data = await res.json();
-    const services = data.services || {};
-    const keys = ["frontend", "backend"].filter((k) => services[k]);
-    document.getElementById("services").innerHTML = keys.length
-      ? keys.map((k) => serviceCard(k, services[k])).join("")
-      : `<div class="card empty">No deploys recorded yet — the next push will show up here.</div>`;
+    if (res.ok) data = await res.json();
+  } catch {}
+  const services = data.services || {}, github = data.github || {};
+  const cards = ["frontend", "backend"].map((k) => card(k, services[k] || {}, github[k]));
+  document.getElementById("services").innerHTML = cards.map((c) => c.html).join("");
 
-    const states = keys.map((k) => services[k].state);
-    const banner = document.getElementById("banner");
-    const [c, text] = states.includes("deploying") ? ["run", "Deploy in progress…"]
-      : states.includes("failed") ? ["bad", "Last deploy failed — the previous version is still running"]
-      : ["ok", "All services deployed"];
-    banner.className = "banner " + c;
-    banner.innerHTML = `<i class="dot"></i><span>${text}</span>`;
+  const cs = cards.map((c) => c.c);
+  const [c, text] = cs.includes("run") ? ["run", "Deploy in progress"]
+    : cs.includes("bad") ? ["bad", "Last deploy failed"]
+    : cs.includes("warn") ? ["warn", "Update waiting"]
+    : ["ok", "All systems synced"];
+  const overall = document.getElementById("overall");
+  overall.className = "overall " + c;
+  overall.innerHTML = `<i class="dot"></i><span>${text}</span>`;
 
-    const rows = (data.history || []).map((h) => `<tr>
-      <td>${esc(NAMES[h.service] || h.service)}</td>
-      <td><span class="pill ${cls(h.state)}">${label(h.state)}</span></td>
-      <td><code>${esc(h.commit?.sha)}</code></td>
-      <td class="msg" title="${esc(h.commit?.subject)}">${esc(h.commit?.subject)}</td>
-      <td>${when(h.finishedAt)}</td>
-      <td>${dur(h.seconds)}</td></tr>`).join("");
-    if (rows) document.getElementById("history").innerHTML = rows;
-    document.getElementById("upd").textContent = "Updated " + ago(data.updatedAt) + " · refreshes every 5s";
-  } catch {
-    document.getElementById("services").innerHTML = `<div class="card empty">No deploys recorded yet — the next push will show up here.</div>`;
-    document.getElementById("banner").className = "banner";
-    document.getElementById("banner").innerHTML = `<i class="dot"></i><span>No deploy data yet</span>`;
-    document.getElementById("upd").textContent = "Refreshes every 5s";
-  }
+  const rows = (data.history || []).map((h) => `<tr>
+    <td>${esc(NAMES[h.service] || h.service)}</td>
+    <td><span class="badge ${h.state === "success" ? "ok" : "bad"}">${h.state === "success" ? "LIVE" : "FAILED"}</span></td>
+    <td><code>${esc(h.commit?.sha)}</code></td>
+    <td class="msg" title="${esc(h.commit?.subject)}">${esc(h.commit?.subject)}</td>
+    <td>${when(h.finishedAt)}</td>
+    <td>${dur(h.seconds)}</td></tr>`).join("");
+  if (rows) document.getElementById("history").innerHTML = rows;
+
+  document.getElementById("foot").textContent =
+    "Auto-refreshes every 10 seconds · VPS checks GitHub every 60 seconds · Updated " + when(new Date().toISOString());
 }
 
 async function runChecks() {
@@ -163,7 +179,7 @@ async function runChecks() {
 
 function tick() { loadStatus(); runChecks(); }
 tick();
-setInterval(tick, 5000);
+setInterval(tick, 10000);
 </script>
 </body>
 </html>
