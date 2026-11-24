@@ -22,7 +22,7 @@ import { PlanUsage } from './plans/plan-usage.entity';
 import { Coupon } from './payments/coupon.entity';
 import { UserEmail } from './users/user-email.entity';
 import { UserEmailChallenge } from './users/user-email-challenge.entity';
-import { Agent, AgentEmailChallenge } from './agents/agent.entity';
+import { Coordinator, CoordinatorEmailChallenge } from './coordinators/coordinator.entity';
 
 dotenv.config();
 
@@ -55,8 +55,8 @@ export default new DataSource({
     Coupon,
     UserEmail,
     UserEmailChallenge,
-    Agent,
-    AgentEmailChallenge,
+    Coordinator,
+    CoordinatorEmailChallenge,
   ],
   migrations: [__dirname + '/migrations/*{.ts,.js}'],
   synchronize: false,

@@ -1,5 +1,5 @@
 import { IsIn } from 'class-validator';
 
-export class AdminAgentStatusDto {
+export class AdminCoordinatorStatusDto {
   @IsIn(['active', 'banned']) status: 'active' | 'banned';
 }

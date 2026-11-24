@@ -4,7 +4,7 @@ import { EventEmitter } from 'node:events';
 import { createHmac } from 'node:crypto';
 import sharp from 'sharp';
 import { PayoutsService } from '../payouts/payouts.service';
-import { Agent } from '../agents/agent.entity';
+import { Coordinator } from '../coordinators/coordinator.entity';
 import { InjectRepository } from '@nestjs/typeorm';
 import { DataSource, In, MoreThanOrEqual, Repository } from 'typeorm';
 import { User } from './user.entity';
@@ -478,12 +478,12 @@ export class UsersService {
       city: user.city,
       profession: user.profession,
     }]));
-    const agentIds = [...new Set(rows.map((row) => row.agentId).filter((id): id is string => Boolean(id)))];
-    const agents = agentIds.length ? await this.dataSource.getRepository(Agent).find({ select: ['id', 'name', 'email'], where: { id: In(agentIds) } }) : [];
-    const agentById = new Map(agents.map((agent) => [agent.id, { name: agent.name, email: agent.email }]));
+    const coordinatorIds = [...new Set(rows.map((row) => row.coordinatorId).filter((id): id is string => Boolean(id)))];
+    const coordinators = coordinatorIds.length ? await this.dataSource.getRepository(Coordinator).find({ select: ['id', 'name', 'email'], where: { id: In(coordinatorIds) } }) : [];
+    const coordinatorById = new Map(coordinators.map((coordinator) => [coordinator.id, { name: coordinator.name, email: coordinator.email }]));
     return rows.map((row) => ({
       ...row,
-      agent: row.agentId ? agentById.get(row.agentId) || null : null,
+      coordinator: row.coordinatorId ? coordinatorById.get(row.coordinatorId) || null : null,
       user: row.userId ? names.get(row.userId) || null : null,
       sender: row.senderId ? names.get(row.senderId) || null : null,
       receiver: row.receiverId ? names.get(row.receiverId) || null : null,
@@ -543,17 +543,17 @@ export class UsersService {
           user.earnedCoinBalance += transaction.grossCoins;
           await manager.getRepository(User).save(user);
         }
-      } else if (status === 'rejected' && transaction.agentId) {
-        const agent = await manager.getRepository(Agent).findOne({ where: { id: transaction.agentId }, lock: { mode: 'pessimistic_write' } });
-        if (agent) {
-          agent.earnedCoinBalance += transaction.grossCoins;
-          await manager.getRepository(Agent).save(agent);
+      } else if (status === 'rejected' && transaction.coordinatorId) {
+        const coordinator = await manager.getRepository(Coordinator).findOne({ where: { id: transaction.coordinatorId }, lock: { mode: 'pessimistic_write' } });
+        if (coordinator) {
+          coordinator.earnedCoinBalance += transaction.grossCoins;
+          await manager.getRepository(Coordinator).save(coordinator);
         }
       }
       transaction.status = status;
       return repository.save(transaction);
     });
-    // Tell the member or agent; does not block or fail the status change.
+    // Tell the member or coordinator; does not block or fail the status change.
     void this.payouts.notifyWithdrawalStatus(updated.id);
     return updated;
   }

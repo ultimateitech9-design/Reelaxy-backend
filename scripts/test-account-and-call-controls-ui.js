@@ -11,7 +11,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
 const mysql = require('mysql2/promise');
 const { JwtService } = require('@nestjs/jwt');
 const prefix = `controltest-${randomUUID()}`;
-const ids = { agent: randomUUID(), a: randomUUID(), b: randomUUID(), admin: randomUUID(), match: randomUUID() };
+const ids = { coordinator: randomUUID(), a: randomUUID(), b: randomUUID(), admin: randomUUID(), match: randomUUID() };
 const frontend = path.resolve(__dirname, '../../Reelaxy-frontend');
 const routeName = `call-control-test-${randomUUID()}`;
 const route = path.resolve(frontend, 'src/app', routeName);
@@ -21,8 +21,8 @@ async function waitFor(check, message) { for (let i = 0; i < 100; i++) { if (awa
 
 async function run() {
   db = await mysql.createConnection({ host: process.env.DB_HOST, port: Number(process.env.DB_PORT || 3306), user: process.env.DB_USER, password: process.env.DB_PASSWORD, database: process.env.DB_NAME });
-  await db.execute('INSERT INTO agents (id,name,email,password) VALUES (?,?,?,?)', [ids.agent, `${prefix} Agent`, `${ids.agent}@example.invalid`, 'not-a-login']);
-  for (const [id, role, creator] of [[ids.a, 'user', ids.agent], [ids.b, 'user', null], [ids.admin, 'super_admin', null]]) {
+  await db.execute('INSERT INTO agents (id,name,email,password) VALUES (?,?,?,?)', [ids.coordinator, `${prefix} Coordinator`, `${ids.coordinator}@example.invalid`, 'not-a-login']);
+  for (const [id, role, creator] of [[ids.a, 'user', ids.coordinator], [ids.b, 'user', null], [ids.admin, 'super_admin', null]]) {
     await db.execute('INSERT INTO users (id,name,email,password,role,status,birthDate,gender,city,onboardingCompleted,notifyMessages,notifyPush,createdByAgentId) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)', [id, `${prefix} ${id === ids.a ? 'A' : id === ids.b ? 'B' : 'Admin'}`, `${id}@example.invalid`, 'not-a-login', role, 'active', '1995-01-01', 'female', 'Mumbai', true, false, false, creator]);
   }
   await db.execute('INSERT INTO matches (id,senderId,receiverId,status) VALUES (?,?,?,?)', [ids.match, ids.a, ids.b, 'MATCHED']);
@@ -40,20 +40,20 @@ export default function Page() { const [open, setOpen] = useState(true); return 
   await admin.addCookies(['management_token','management_client_token','management_role'].map(name => ({ name, value: name === 'management_role' ? 'super_admin' : token(ids.admin), domain: 'localhost', path: '/' })));
   const adminPage = await admin.newPage(); currentPage = adminPage; adminPage.setDefaultTimeout(60000);
   await adminPage.goto('http://localhost:3002/super-admin', { waitUntil: 'networkidle', timeout: 120000 });
-  await adminPage.getByRole('button', { name: /^Registered Agents \d/ }).click();
-  await adminPage.getByRole('heading', { name: 'Registered Agents', exact: true }).waitFor();
+  await adminPage.getByRole('button', { name: /^Registered Coordinators \d/ }).click();
+  await adminPage.getByRole('heading', { name: 'Registered Coordinators', exact: true }).waitFor();
   await adminPage.getByRole('textbox', { name: 'Search accounts' }).fill(prefix);
-  await adminPage.getByRole('cell', { name: `${prefix} Agent ${ids.agent}@example.invalid` }).waitFor();
+  await adminPage.getByRole('cell', { name: `${prefix} Coordinator ${ids.coordinator}@example.invalid` }).waitFor();
   assert.equal(await adminPage.getByText(`${prefix} A`, { exact: true }).count(), 0);
   await adminPage.getByRole('link', { name: 'View created users' }).click();
   await adminPage.getByText(`${prefix} A`, { exact: true }).waitFor();
   assert.equal(await adminPage.getByText(`${prefix} B`, { exact: true }).count(), 0);
   await adminPage.goto('http://localhost:3002/super-admin', { waitUntil: 'networkidle' });
   await adminPage.getByRole('button', { name: /^Active Users \d/ }).click();
-  await adminPage.getByRole('heading', { name: 'Active Users & Agents' }).waitFor();
+  await adminPage.getByRole('heading', { name: 'Active Users & Coordinators' }).waitFor();
   await adminPage.getByRole('textbox', { name: 'Search accounts' }).fill(prefix);
-  for (const suffix of ['A','B','Agent']) await adminPage.getByText(`${prefix} ${suffix}`, { exact: true }).waitFor();
-  console.log('PASS: dashboard card navigation, agent-only list, one-agent created users and combined active accounts');
+  for (const suffix of ['A','B','Coordinator']) await adminPage.getByText(`${prefix} ${suffix}`, { exact: true }).waitFor();
+  console.log('PASS: dashboard card navigation, coordinator-only list, one-coordinator created users and combined active accounts');
   await admin.close();
   const pages = [];
   for (const [id, other, support] of [[ids.a, ids.b, true], [ids.b, ids.a, false]]) {
@@ -148,7 +148,7 @@ run().catch(async error => {
   if (db) {
     await db.execute('DELETE FROM audit_logs WHERE userId IN (?,?,?)', [ids.a, ids.b, ids.admin]);
     await db.execute('DELETE FROM users WHERE id IN (?,?,?)', [ids.a, ids.b, ids.admin]);
-    await db.execute('DELETE FROM agents WHERE id=?', [ids.agent]); await db.end();
+    await db.execute('DELETE FROM agents WHERE id=?', [ids.coordinator]); await db.end();
   }
   // The route is a single generated file under the verified test-only directory.
   await fs.unlink(path.join(route, 'page.tsx')).catch(() => {}); await fs.rmdir(route).catch(() => {});

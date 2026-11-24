@@ -8,19 +8,19 @@ const { ValidationPipe } = require('@nestjs/common');
 const { DataSource, In, Not } = require('typeorm');
 const { JwtService } = require('@nestjs/jwt');
 const { AppModule } = require('../dist/app.module');
-const { Agent } = require('../dist/agents/agent.entity');
+const { Coordinator } = require('../dist/coordinators/coordinator.entity');
 const { User } = require('../dist/users/user.entity');
 const prefix = `directorytest-${randomUUID()}`;
-const userIds = [], agentIds = [];
+const userIds = [], coordinatorIds = [];
 let app, db;
 async function run() {
   app = await NestFactory.create(AppModule, { logger: false });
   app.useGlobalPipes(new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true, transform: true }));
   await app.listen(0, '127.0.0.1'); db = app.get(DataSource); const origin = await app.getUrl();
-  const agentRepo = db.getRepository(Agent), userRepo = db.getRepository(User);
-  for (const suffix of ['Agent One', 'Agent Two']) { const row = await agentRepo.save({ name: `${prefix} ${suffix}`, email: `${randomUUID()}@example.invalid`, password: 'not-a-login' }); agentIds.push(row.id); }
-  for (const [suffix, role, status, agent] of [['Created User', 'user', 'active', agentIds[0]], ['Direct User', 'user', 'active', null], ['Banned User', 'user', 'banned', agentIds[0]], ['Admin', 'super_admin', 'active', null], ['Support', 'support', 'active', null]]) {
-    const row = await userRepo.save({ name: `${prefix} ${suffix}`, email: `${randomUUID()}@example.invalid`, password: 'not-a-login', role, status, createdByAgentId: agent }); userIds.push(row.id);
+  const coordinatorRepo = db.getRepository(Coordinator), userRepo = db.getRepository(User);
+  for (const suffix of ['Coordinator One', 'Coordinator Two']) { const row = await coordinatorRepo.save({ name: `${prefix} ${suffix}`, email: `${randomUUID()}@example.invalid`, password: 'not-a-login' }); coordinatorIds.push(row.id); }
+  for (const [suffix, role, status, coordinator] of [['Created User', 'user', 'active', coordinatorIds[0]], ['Direct User', 'user', 'active', null], ['Banned User', 'user', 'banned', coordinatorIds[0]], ['Admin', 'super_admin', 'active', null], ['Support', 'support', 'active', null]]) {
+    const row = await userRepo.save({ name: `${prefix} ${suffix}`, email: `${randomUUID()}@example.invalid`, password: 'not-a-login', role, status, createdByCoordinatorId: coordinator }); userIds.push(row.id);
   }
   const jwt = new JwtService();
   const token = id => jwt.sign({ sub: id }, { secret: process.env.JWT_SECRET.trim(), expiresIn: '10m' });
@@ -29,12 +29,12 @@ async function run() {
     const response = await fetch(origin + path, { headers: { Authorization: `Bearer ${auth}` } });
     assert.equal(response.status, expected, path); return response.json();
   }
-  const agents = await get(`/api/agents?search=${encodeURIComponent(prefix)}`);
-  assert.equal(agents.total, 2); assert.ok(agents.agents.every(row => agentIds.includes(row.id)));
-  assert.ok(agents.agents.every(row => !('password' in row) && !('sessionVersion' in row)));
-  const first = agents.agents.find(row => row.id === agentIds[0]); assert.equal(first.userCount, 2); assert.equal(first.activeUserCount, 1);
+  const coordinators = await get(`/api/coordinators?search=${encodeURIComponent(prefix)}`);
+  assert.equal(coordinators.total, 2); assert.ok(coordinators.coordinators.every(row => coordinatorIds.includes(row.id)));
+  assert.ok(coordinators.coordinators.every(row => !('password' in row) && !('sessionVersion' in row)));
+  const first = coordinators.coordinators.find(row => row.id === coordinatorIds[0]); assert.equal(first.userCount, 2); assert.equal(first.activeUserCount, 1);
   const active = await get(`/api/accounts?status=active&search=${encodeURIComponent(prefix)}`);
-  assert.equal(active.total, 6); assert.equal(active.accounts.filter(row => row.accountType === 'agent').length, 2);
+  assert.equal(active.total, 6); assert.equal(active.accounts.filter(row => row.accountType === 'coordinator').length, 2);
   assert.equal(active.accounts.filter(row => row.accountType === 'user').length, 4); assert.ok(active.accounts.every(row => row.status === 'active' && !('password' in row)));
   const all = await get(`/api/accounts?status=all&search=${encodeURIComponent(prefix)}`); assert.equal(all.total, 7);
   const found = [];
@@ -42,13 +42,13 @@ async function run() {
   assert.equal(new Set(found).size, 7);
   const dashboard = await get('/api/dashboard');
   const stats = Object.fromEntries(dashboard.stats.map(row => [row.label, Number(row.value)]));
-  assert.equal(stats['Registered Agents'], await agentRepo.countBy({ status: Not('deleted') }));
-  assert.equal(stats['Active Users'], await userRepo.countBy({ status: 'active' }) + await agentRepo.countBy({ status: 'active' }));
-  assert.equal(stats['Total Users'], await userRepo.count() + await agentRepo.countBy({ status: Not('deleted') }));
-  for (const id of [userIds[0], userIds[4]]) { await get('/api/agents', token(id), 403); await get('/api/accounts', token(id), 403); }
-  console.log('PASS: agent-only directory, created-user counts, combined active/all account counts, search/pagination, dashboard consistency, secret-field exclusion and Super Admin authorization.');
+  assert.equal(stats['Registered Coordinators'], await coordinatorRepo.countBy({ status: Not('deleted') }));
+  assert.equal(stats['Active Users'], await userRepo.countBy({ status: 'active' }) + await coordinatorRepo.countBy({ status: 'active' }));
+  assert.equal(stats['Total Users'], await userRepo.count() + await coordinatorRepo.countBy({ status: Not('deleted') }));
+  for (const id of [userIds[0], userIds[4]]) { await get('/api/coordinators', token(id), 403); await get('/api/accounts', token(id), 403); }
+  console.log('PASS: coordinator-only directory, created-user counts, combined active/all account counts, search/pagination, dashboard consistency, secret-field exclusion and Super Admin authorization.');
 }
 run().catch(error => { console.error(error.message); process.exitCode = 1; }).finally(async () => {
-  if (db) { if (userIds.length) await db.getRepository(User).delete({ id: In(userIds) }); if (agentIds.length) await db.getRepository(Agent).delete({ id: In(agentIds) }); }
+  if (db) { if (userIds.length) await db.getRepository(User).delete({ id: In(userIds) }); if (coordinatorIds.length) await db.getRepository(Coordinator).delete({ id: In(coordinatorIds) }); }
   if (app) await app.close();
 });

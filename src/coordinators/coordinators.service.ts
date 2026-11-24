@@ -7,9 +7,9 @@ import { createHmac, randomInt, timingSafeEqual } from 'crypto';
 import * as bcrypt from 'bcryptjs';
 import * as nodemailer from 'nodemailer';
 import { User } from '../users/user.entity';
-import { Agent, AgentEmailChallenge } from './agent.entity';
-import { agentSecret } from './agent.guard';
-import { AgentBulkUsersDto, AgentLoginDto, AgentRegisterDto, AgentResetDto, AgentUsersQueryDto } from './agents.dto';
+import { Coordinator, CoordinatorEmailChallenge } from './coordinator.entity';
+import { coordinatorSecret } from './coordinator.guard';
+import { CoordinatorBulkUsersDto, CoordinatorLoginDto, CoordinatorRegisterDto, CoordinatorResetDto, CoordinatorUsersQueryDto } from './coordinators.dto';
 import { UserActivityService } from '../users/user-activity.service';
 import { AuditLog } from '../platform/audit-log.entity';
 import { VideoCall } from '../messages/video-call.entity';
@@ -18,10 +18,10 @@ import { monthStartIndia } from '../plans/plan-entitlements';
 import { MessagesGateway } from '../messages/messages.gateway';
 
 @Injectable()
-export class AgentsService {
+export class CoordinatorsService {
   private readonly limits = new Map<string, { count: number; until: number }>();
   constructor(
-    @InjectRepository(Agent) private readonly agents: Repository<Agent>,
+    @InjectRepository(Coordinator) private readonly coordinators: Repository<Coordinator>,
     @InjectRepository(User) private readonly users: Repository<User>,
     private readonly db: DataSource, private readonly jwt: JwtService,
     private readonly activity: UserActivityService,
@@ -36,29 +36,29 @@ export class AgentsService {
     this.limits.set(key, value);
   }
   /**
-   * Coins this agent earned from direct calls to the users it created:
+   * Coins this coordinator earned from direct calls to the users it created:
    * wallet balance, this month / all-time totals, per-user totals and the
    * latest entries.
    */
-  async earnings(agentId: string) {
-    const agent = await this.agents.findOne({ where: { id: agentId } });
-    if (!agent) throw new NotFoundException('Agent not found.');
-    const tx = () => this.db.getRepository(CoinTransaction).createQueryBuilder('tx').where("tx.type = 'call' AND tx.agentId = :agentId", { agentId });
+  async earnings(coordinatorId: string) {
+    const coordinator = await this.coordinators.findOne({ where: { id: coordinatorId } });
+    if (!coordinator) throw new NotFoundException('Coordinator not found.');
+    const tx = () => this.db.getRepository(CoinTransaction).createQueryBuilder('tx').where("tx.type = 'call' AND tx.coordinatorId = :coordinatorId", { coordinatorId });
     const monthStart = monthStartIndia();
     const [month, allTime, byUser, recent] = await Promise.all([
-      tx().andWhere('tx.createdAt >= :monthStart', { monthStart }).select('COALESCE(SUM(tx.agentCoins), 0)', 'coins').getRawOne(),
-      tx().select('COALESCE(SUM(tx.agentCoins), 0)', 'coins').addSelect('COUNT(*)', 'minutes').getRawOne(),
+      tx().andWhere('tx.createdAt >= :monthStart', { monthStart }).select('COALESCE(SUM(tx.coordinatorCoins), 0)', 'coins').getRawOne(),
+      tx().select('COALESCE(SUM(tx.coordinatorCoins), 0)', 'coins').addSelect('COUNT(*)', 'minutes').getRawOne(),
       tx().leftJoin(User, 'user', 'user.id = tx.receiverId')
         .select('tx.receiverId', 'userId').addSelect('user.name', 'name')
-        .addSelect('SUM(tx.agentCoins)', 'coins').addSelect('COUNT(*)', 'minutes')
+        .addSelect('SUM(tx.coordinatorCoins)', 'coins').addSelect('COUNT(*)', 'minutes')
         .groupBy('tx.receiverId').addGroupBy('user.name')
         .orderBy('coins', 'DESC').limit(20).getRawMany(),
       tx().leftJoin(User, 'user', 'user.id = tx.receiverId')
-        .select(['tx.id AS id', 'tx.createdAt AS createdAt', 'tx.agentCoins AS coins', 'tx.label AS label', 'user.name AS name'])
+        .select(['tx.id AS id', 'tx.createdAt AS createdAt', 'tx.coordinatorCoins AS coins', 'tx.label AS label', 'user.name AS name'])
         .orderBy('tx.createdAt', 'DESC').limit(20).getRawMany(),
     ]);
     return {
-      balance: agent.earnedCoinBalance,
+      balance: coordinator.earnedCoinBalance,
       thisMonth: Number(month?.coins) || 0,
       allTime: Number(allTime?.coins) || 0,
       paidMinutes: Number(allTime?.minutes) || 0,
@@ -67,19 +67,19 @@ export class AgentsService {
     };
   }
 
-  publicAgent(agent: Agent) { return { id: agent.id, name: agent.name, email: agent.email, createdAt: agent.createdAt }; }
-  private session(agent: Agent) {
-    return { agent: this.publicAgent(agent), token: this.jwt.sign({ sub: agent.id, version: agent.sessionVersion }, { secret: agentSecret(), audience: 'agent', expiresIn: '12h' }) };
+  publicCoordinator(coordinator: Coordinator) { return { id: coordinator.id, name: coordinator.name, email: coordinator.email, createdAt: coordinator.createdAt }; }
+  private session(coordinator: Coordinator) {
+    return { coordinator: this.publicCoordinator(coordinator), token: this.jwt.sign({ sub: coordinator.id, version: coordinator.sessionVersion }, { secret: coordinatorSecret(), audience: 'coordinator', expiresIn: '12h' }) };
   }
   private hash(email: string, purpose: string, code: string) {
-    return createHmac('sha256', agentSecret()).update(`${purpose}:${email}:${code}`).digest('hex');
+    return createHmac('sha256', coordinatorSecret()).update(`${purpose}:${email}:${code}`).digest('hex');
   }
 
   async sendCode(email: string, purpose: 'signup' | 'reset') {
-    const agent = await this.agents.findOneBy({ email });
-    if (purpose === 'signup' && agent) throw new ConflictException('This email already has an agent account. Please sign in.');
+    const coordinator = await this.coordinators.findOneBy({ email });
+    if (purpose === 'signup' && coordinator) throw new ConflictException('This email already has an coordinator account. Please sign in.');
     const message = 'If this email is eligible, a verification code has been sent. It expires in 10 minutes.';
-    if (purpose === 'reset' && !agent) return { message };
+    if (purpose === 'reset' && !coordinator) return { message };
     const host = process.env.SMTP_HOST?.trim();
     const user = process.env.SMTP_USER?.trim();
     const pass = process.env.SMTP_PASSWORD;
@@ -87,7 +87,7 @@ export class AgentsService {
     const code = randomInt(100000, 1000000).toString();
     const now = new Date();
     const challenge = await this.db.transaction(async (manager) => {
-      const repo = manager.getRepository(AgentEmailChallenge);
+      const repo = manager.getRepository(CoordinatorEmailChallenge);
       const current = await repo.findOne({ where: { email, purpose }, lock: { mode: 'pessimistic_write' } });
       if (current && now.getTime() - current.sentAt.getTime() < 60_000) throw new HttpException('Please wait 60 seconds before requesting another code.', 429);
       const sameWindow = current && now.getTime() - current.windowStartedAt.getTime() < 3600_000;
@@ -97,9 +97,9 @@ export class AgentsService {
     const port = Number(process.env.SMTP_PORT || 465);
     const mailer = nodemailer.createTransport({ host, port, secure: (process.env.SMTP_SECURE || String(port === 465)) === 'true', auth: { user, pass }, connectionTimeout: 15000, socketTimeout: 20000 });
     try {
-      await mailer.sendMail({ from: process.env.SMTP_FROM?.trim() || user, to: email, subject: `${code} - Reelaxy Agent ${purpose === 'signup' ? 'verification' : 'password reset'}`, text: `Your Reelaxy Agent ${purpose === 'signup' ? 'verification' : 'password reset'} code is ${code}. It expires in 10 minutes. Never share this code. If you did not request it, ignore this email.` });
+      await mailer.sendMail({ from: process.env.SMTP_FROM?.trim() || user, to: email, subject: `${code} - Reelaxy Coordinator ${purpose === 'signup' ? 'verification' : 'password reset'}`, text: `Your Reelaxy Coordinator ${purpose === 'signup' ? 'verification' : 'password reset'} code is ${code}. It expires in 10 minutes. Never share this code. If you did not request it, ignore this email.` });
     } catch {
-      await this.db.getRepository(AgentEmailChallenge).delete({ id: challenge.id, codeHash: challenge.codeHash });
+      await this.db.getRepository(CoordinatorEmailChallenge).delete({ id: challenge.id, codeHash: challenge.codeHash });
       throw new ServiceUnavailableException('We could not send the email. Please try again.');
     } finally { mailer.close(); }
     return { message };
@@ -107,7 +107,7 @@ export class AgentsService {
 
   // Return verification failures so attempt counters commit even when a code is incorrect.
   private async consume(manager: EntityManager, email: string, purpose: string, otp: string) {
-    const repo = manager.getRepository(AgentEmailChallenge);
+    const repo = manager.getRepository(CoordinatorEmailChallenge);
     const challenge = await repo.findOne({ where: { email, purpose }, lock: { mode: 'pessimistic_write' } });
     if (!challenge || challenge.expiresAt.getTime() <= Date.now() || challenge.attempts >= 5) return false;
     const correct = timingSafeEqual(Buffer.from(challenge.codeHash, 'hex'), Buffer.from(this.hash(email, purpose, otp), 'hex'));
@@ -122,42 +122,42 @@ export class AgentsService {
       throw error;
     }
   }
-  async register(dto: AgentRegisterDto) {
+  async register(dto: CoordinatorRegisterDto) {
     const password = await bcrypt.hash(dto.password, 12);
-    const agent = await this.writeConflict(() => this.db.transaction(async (manager) => {
+    const coordinator = await this.writeConflict(() => this.db.transaction(async (manager) => {
       if (!await this.consume(manager, dto.email, 'signup', dto.otp)) return null;
-      return manager.save(Agent, manager.create(Agent, { name: dto.name, email: dto.email, password }));
+      return manager.save(Coordinator, manager.create(Coordinator, { name: dto.name, email: dto.email, password }));
     }));
-    if (!agent) throw new UnauthorizedException('The code is incorrect or expired. Request a new code after five attempts.');
-    return this.session(agent);
+    if (!coordinator) throw new UnauthorizedException('The code is incorrect or expired. Request a new code after five attempts.');
+    return this.session(coordinator);
   }
-  async login(dto: AgentLoginDto) {
-    const agent = await this.agents.createQueryBuilder('agent').addSelect('agent.password').where('agent.email = :email', { email: dto.email }).getOne();
-    if (!agent || !await bcrypt.compare(dto.password, agent.password)) throw new UnauthorizedException('Incorrect email or password.');
-    if (agent.status !== 'active') throw new UnauthorizedException('This agent account is not active. Please contact support.');
-    return this.session(agent);
+  async login(dto: CoordinatorLoginDto) {
+    const coordinator = await this.coordinators.createQueryBuilder('coordinator').addSelect('coordinator.password').where('coordinator.email = :email', { email: dto.email }).getOne();
+    if (!coordinator || !await bcrypt.compare(dto.password, coordinator.password)) throw new UnauthorizedException('Incorrect email or password.');
+    if (coordinator.status !== 'active') throw new UnauthorizedException('This coordinator account is not active. Please contact support.');
+    return this.session(coordinator);
   }
-  async reset(dto: AgentResetDto) {
+  async reset(dto: CoordinatorResetDto) {
     const password = await bcrypt.hash(dto.password, 12);
     const ok = await this.db.transaction(async (manager) => {
       if (!await this.consume(manager, dto.email, 'reset', dto.otp)) return false;
-      await manager.createQueryBuilder().update(Agent).set({ password, sessionVersion: () => 'sessionVersion + 1' }).where('email = :email', { email: dto.email }).execute();
+      await manager.createQueryBuilder().update(Coordinator).set({ password, sessionVersion: () => 'sessionVersion + 1' }).where('email = :email', { email: dto.email }).execute();
       return true;
     });
     if (!ok) throw new UnauthorizedException('The code is incorrect or expired. Request a new code after five attempts.');
     return { message: 'Password reset successfully. Please sign in with your new password.' };
   }
-  async logout(id: string) { await this.agents.increment({ id }, 'sessionVersion', 1); return { success: true }; }
+  async logout(id: string) { await this.coordinators.increment({ id }, 'sessionVersion', 1); return { success: true }; }
 
-  async listUsers(agentId: string, query: AgentUsersQueryDto) {
-    const builder = this.users.createQueryBuilder('user').select(['user.id', 'user.name', 'user.email', 'user.phone', 'user.birthDate', 'user.gender', 'user.city', 'user.profession', 'user.bio', 'user.status', 'user.createdAt', 'user.onboardingCompleted', 'user.agentEmailChangedAt']).where('user.createdByAgentId = :agentId', { agentId }).andWhere('user.role = :role', { role: 'user' });
+  async listUsers(coordinatorId: string, query: CoordinatorUsersQueryDto) {
+    const builder = this.users.createQueryBuilder('user').select(['user.id', 'user.name', 'user.email', 'user.phone', 'user.birthDate', 'user.gender', 'user.city', 'user.profession', 'user.bio', 'user.status', 'user.createdAt', 'user.onboardingCompleted', 'user.coordinatorEmailChangedAt']).where('user.createdByCoordinatorId = :coordinatorId', { coordinatorId }).andWhere('user.role = :role', { role: 'user' });
     if (query.search.trim()) builder.andWhere('(user.name LIKE :search OR user.email LIKE :search OR user.city LIKE :search)', { search: `%${query.search.trim()}%` });
     const [users, total] = await builder.orderBy('user.createdAt', 'DESC').skip((query.page - 1) * query.limit).take(query.limit).getManyAndCount();
-    const totalAccounts = await this.users.countBy({ createdByAgentId: agentId, role: 'user' });
-    const activeAccounts = await this.users.countBy({ createdByAgentId: agentId, status: 'active', role: 'user' });
+    const totalAccounts = await this.users.countBy({ createdByCoordinatorId: coordinatorId, role: 'user' });
+    const activeAccounts = await this.users.countBy({ createdByCoordinatorId: coordinatorId, status: 'active', role: 'user' });
     return { users, total, totalAccounts, activeAccounts, page: query.page, pages: Math.max(1, Math.ceil(total / query.limit)) };
   }
-  async createUsers(agentId: string, dto: AgentBulkUsersDto) {
+  async createUsers(coordinatorId: string, dto: CoordinatorBulkUsersDto) {
     if (!dto.consentConfirmed) throw new BadRequestException('Confirm that each adult user has agreed to account creation and profile publication.');
     const emails = dto.users.map(user => user.email);
     if (new Set(emails).size !== emails.length) throw new BadRequestException('Each user must have a different email address.');
@@ -172,23 +172,23 @@ export class AgentsService {
       }
     }
     const prepared = [];
-    for (const user of dto.users) prepared.push({ ...user, spokenLanguages: normalizeLanguages(user.spokenLanguages), photos: user.photos || [], photosVisibleToNonMatches: true, password: await bcrypt.hash(user.password, 12), createdByAgentId: agentId, role: 'user' as const, status: 'active' as const, onboardingCompleted: false, isVerified: false });
+    for (const user of dto.users) prepared.push({ ...user, spokenLanguages: normalizeLanguages(user.spokenLanguages), photos: user.photos || [], photosVisibleToNonMatches: true, password: await bcrypt.hash(user.password, 12), createdByCoordinatorId: coordinatorId, role: 'user' as const, status: 'active' as const, onboardingCompleted: false, isVerified: false });
     const result = await this.writeConflict(() => this.db.transaction(async manager => {
-      const agent = await manager.findOne(Agent, { where: { id: agentId }, lock: { mode: 'pessimistic_write' } });
-      if (!agent || agent.status !== 'active') throw new UnauthorizedException('This agent account is not active.');
+      const coordinator = await manager.findOne(Coordinator, { where: { id: coordinatorId }, lock: { mode: 'pessimistic_write' } });
+      if (!coordinator || coordinator.status !== 'active') throw new UnauthorizedException('This coordinator account is not active.');
       const saved = await manager.save(User, prepared.map(user => manager.create(User, user)));
       await manager.save(AuditLog, saved.map(user => manager.create(AuditLog, {
-        user: agent.name, userId: user.id, activity: `Agent ${agentId} created user ${user.id}`,
-        action: 'Create', module: 'Agent Users', role: 'agent',
+        user: coordinator.name, userId: user.id, activity: `Coordinator ${coordinatorId} created user ${user.id}`,
+        action: 'Create', module: 'Coordinator Users', role: 'coordinator',
       })));
       return saved.map(user => ({ id: user.id, name: user.name, email: user.email, status: user.status, onboardingCompleted: user.onboardingCompleted, createdAt: user.createdAt }));
     }));
     return { users: result, message: `${result.length} account${result.length === 1 ? '' : 's'} created. Users can sign in with their email and assigned password.` };
   }
 
-  async exportUsers(agentId: string, cursor?: string) {
+  async exportUsers(coordinatorId: string, cursor?: string) {
     const query = this.users.createQueryBuilder('user').select(['user.id', 'user.createdAt'])
-      .where('user.createdByAgentId = :agentId AND user.role = :role', { agentId, role: 'user' });
+      .where('user.createdByCoordinatorId = :coordinatorId AND user.role = :role', { coordinatorId, role: 'user' });
     if (cursor) {
       let marker: { id: string; at: string };
       try {
@@ -202,8 +202,8 @@ export class AgentsService {
     const page = ranked.entities;
     const ids = page.slice(0, 5).map(user => user.id);
     const records = ids.length ? await this.users.createQueryBuilder('user')
-      .select(['user.id', 'user.name', 'user.email', 'user.phone', 'user.birthDate', 'user.gender', 'user.city', 'user.profession', 'user.bio', 'user.photos', 'user.status', 'user.createdAt', 'user.onboardingCompleted', 'user.agentEmailChangedAt'])
-      .where('user.id IN (:...ids) AND user.createdByAgentId = :agentId AND user.role = :role', { ids, agentId, role: 'user' }).getMany() : [];
+      .select(['user.id', 'user.name', 'user.email', 'user.phone', 'user.birthDate', 'user.gender', 'user.city', 'user.profession', 'user.bio', 'user.photos', 'user.status', 'user.createdAt', 'user.onboardingCompleted', 'user.coordinatorEmailChangedAt'])
+      .where('user.id IN (:...ids) AND user.createdByCoordinatorId = :coordinatorId AND user.role = :role', { ids, coordinatorId, role: 'user' }).getMany() : [];
     const byId = new Map(records.map(user => [user.id, user]));
     const users = ids.map(id => byId.get(id)).filter((user): user is User => Boolean(user));
     const last = page[Math.min(page.length, 5) - 1];
@@ -211,22 +211,22 @@ export class AgentsService {
     return { users, nextCursor: page.length > 5 && last ? Buffer.from(JSON.stringify({ id: last.id, at: lastRaw.cursorAt })).toString('base64url') : null };
   }
 
-  async userDetails(agentId: string, id: string) {
+  async userDetails(coordinatorId: string, id: string) {
     const user = await this.users.findOne({
-      where: { id, createdByAgentId: agentId, role: 'user' },
-      select: ['id', 'name', 'email', 'phone', 'birthDate', 'gender', 'city', 'profession', 'bio', 'photos', 'status', 'createdAt', 'onboardingCompleted', 'agentEmailChangedAt'],
+      where: { id, createdByCoordinatorId: coordinatorId, role: 'user' },
+      select: ['id', 'name', 'email', 'phone', 'birthDate', 'gender', 'city', 'profession', 'bio', 'photos', 'status', 'createdAt', 'onboardingCompleted', 'coordinatorEmailChangedAt'],
     });
     if (!user) throw new NotFoundException('User not found in your workspace.');
     return { user: { ...user, activity: await this.activity.get(id) } };
   }
 
-  async updatePhoto(agentId: string, id: string, photo: string) {
+  async updatePhoto(coordinatorId: string, id: string, photo: string) {
     await this.db.transaction(async manager => {
       const repo = manager.getRepository(User);
-      const user = await repo.findOne({ where: { id, createdByAgentId: agentId, role: 'user' }, lock: { mode: 'pessimistic_write' } });
+      const user = await repo.findOne({ where: { id, createdByCoordinatorId: coordinatorId, role: 'user' }, lock: { mode: 'pessimistic_write' } });
       if (!user) throw new NotFoundException('User not found in your workspace.');
       if (user.photos?.[0] === photo) return;
-      // An incomplete, photo-less agent profile still has its initial DB defaults.
+      // An incomplete, photo-less coordinator profile still has its initial DB defaults.
       if (!user.onboardingCompleted && !user.photos?.length) user.photosVisibleToNonMatches = true;
       user.photos = [photo, ...(user.photos || []).slice(1).filter(existing => existing !== photo)];
       user.isVerified = false;
@@ -236,22 +236,22 @@ export class AgentsService {
       user.kycVerifiedAt = null;
       await repo.save(user);
     });
-    return { ...await this.userDetails(agentId, id), message: 'Profile photo saved successfully.' };
+    return { ...await this.userDetails(coordinatorId, id), message: 'Profile photo saved successfully.' };
   }
 
-  async userActivity(agentId: string, id: string, page: number) {
-    if (!await this.users.existsBy({ id, createdByAgentId: agentId, role: 'user' })) throw new NotFoundException('User not found in your workspace.');
+  async userActivity(coordinatorId: string, id: string, page: number) {
+    if (!await this.users.existsBy({ id, createdByCoordinatorId: coordinatorId, role: 'user' })) throw new NotFoundException('User not found in your workspace.');
     return this.activity.get(id, page);
   }
 
-  async moderateUser(agentId: string, id: string, action: 'ban' | 'delete') {
+  async moderateUser(coordinatorId: string, id: string, action: 'ban' | 'delete') {
     await this.db.transaction(async manager => {
       const repo = manager.getRepository(User);
-      const user = await repo.findOne({ where: { id, createdByAgentId: agentId, role: 'user' }, lock: { mode: 'pessimistic_write' } });
+      const user = await repo.findOne({ where: { id, createdByCoordinatorId: coordinatorId, role: 'user' }, lock: { mode: 'pessimistic_write' } });
       if (!user) throw new NotFoundException('User not found in your workspace.');
       await manager.save(AuditLog, manager.create(AuditLog, {
-        user: user.name, userId: user.id, activity: `Agent ${agentId} ${action === 'ban' ? 'banned' : 'deleted'} user ${id}`,
-        action: action === 'ban' ? 'Ban' : 'Delete', module: 'Agent Users', role: 'agent',
+        user: user.name, userId: user.id, activity: `Coordinator ${coordinatorId} ${action === 'ban' ? 'banned' : 'deleted'} user ${id}`,
+        action: action === 'ban' ? 'Ban' : 'Delete', module: 'Coordinator Users', role: 'coordinator',
       }));
       if (action === 'delete') await repo.remove(user);
       else {

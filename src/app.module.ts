@@ -21,7 +21,7 @@ import { PushNotificationsModule } from './push-notifications/push-notifications
 import { PaymentsModule } from './payments/payments.module';
 import { PlansModule } from './plans/plans.module';
 import { WebrtcModule } from './webrtc/webrtc.module';
-import { AgentsModule } from './agents/agents.module';
+import { CoordinatorsModule } from './coordinators/coordinators.module';
 import { APP_INTERCEPTOR } from '@nestjs/core';
 import { StaffActivityInterceptor } from './common/staff-activity.interceptor';
 
@@ -68,7 +68,7 @@ dotenv.config();
     PaymentsModule,
     WebrtcModule,
     PlansModule,
-    AgentsModule,
+    CoordinatorsModule,
   ],
   controllers: [HealthController],
   // Every staff change (create/update/delete) is written to the activity log under that staff member.

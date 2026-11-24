@@ -1,6 +1,6 @@
 import { Column, CreateDateColumn, Entity, Index, PrimaryGeneratedColumn, UpdateDateColumn } from 'typeorm';
 
-export type PayoutOwnerType = 'user' | 'agent';
+export type PayoutOwnerType = 'user' | 'coordinator';
 export type PayoutMethod = 'bank' | 'upi';
 
 /** A saved bank account or UPI ID used for withdrawals. */
@@ -8,7 +8,10 @@ export type PayoutMethod = 'bank' | 'upi';
 @Index('IDX_payout_accounts_owner', ['ownerType', 'ownerId'])
 export class PayoutAccount {
   @PrimaryGeneratedColumn('uuid') id: string;
-  @Column({ type: 'enum', enum: ['user', 'agent'] }) ownerType: PayoutOwnerType;
+  @Column({ type: 'enum', enum: ['user', 'agent'], transformer: {
+    to: (value: PayoutOwnerType) => value === 'coordinator' ? 'agent' : value,
+    from: (value: string): PayoutOwnerType => value === 'agent' ? 'coordinator' : 'user',
+  } }) ownerType: PayoutOwnerType;
   @Column({ type: 'char', length: 36 }) ownerId: string;
   @Column({ type: 'enum', enum: ['bank', 'upi'] }) method: PayoutMethod;
   @Column({ type: 'varchar', length: 120, nullable: true }) accountHolder: string | null;

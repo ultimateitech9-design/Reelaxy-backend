@@ -3,7 +3,7 @@ import { BadRequestException, ForbiddenException, Injectable, NotFoundException 
 import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
 import { DataSource, In, IsNull, MoreThanOrEqual, Not, Repository } from 'typeorm';
 import { User } from '../users/user.entity';
-import { Agent } from '../agents/agent.entity';
+import { Coordinator } from '../coordinators/coordinator.entity';
 import { CoinTransaction } from '../users/coin-transaction.entity';
 import { MatchRelation, MatchStatus } from '../matches/match.entity';
 import { PlatformSetting } from '../platform/platform-setting.entity';
@@ -19,9 +19,9 @@ export type DirectCallSettings = {
   freeCallsPerMonth: number;
   freeVideoSeconds: number;
   freeAudioSeconds: number;
-  /** Share of every charged minute for the receiver; the receiver's agent gets agentPercent. */
+  /** Share of every charged minute for the receiver; the receiver's coordinator gets coordinatorPercent. */
   receiverPercent: number;
-  agentPercent: number;
+  coordinatorPercent: number;
   /** Direct calls one caller may start to the same person per day (spam guard). */
   maxCallsPerReceiverPerDay: number;
   /** Coin packs offered in the upgrade popup (1 coin = ₹1). */
@@ -39,7 +39,7 @@ export const DEFAULT_DIRECT_CALL_SETTINGS: DirectCallSettings = {
   freeVideoSeconds: 30,
   freeAudioSeconds: 20,
   receiverPercent: 50,
-  agentPercent: 10,
+  coordinatorPercent: 10,
   maxCallsPerReceiverPerDay: 5,
   packs: [299, 499, 999],
   giftAmounts: [100, 250, 500, 1000],
@@ -136,7 +136,10 @@ export class DirectCallsService {
 
   async settings(): Promise<DirectCallSettings> {
     const row = await this.settingRepo.findOne({ where: { key: SETTINGS_KEY } });
-    return { ...DEFAULT_DIRECT_CALL_SETTINGS, ...((row?.value as Partial<DirectCallSettings>) || {}) };
+    // Read the old persisted key while exposing only coordinator terminology.
+    const { agentPercent, ...stored } = (row?.value || {}) as Partial<DirectCallSettings> & { agentPercent?: number };
+    return { ...DEFAULT_DIRECT_CALL_SETTINGS, ...stored,
+      coordinatorPercent: stored.coordinatorPercent ?? agentPercent ?? DEFAULT_DIRECT_CALL_SETTINGS.coordinatorPercent };
   }
 
   async updateSettings(input: Partial<DirectCallSettings>): Promise<DirectCallSettings> {
@@ -149,7 +152,7 @@ export class DirectCallsService {
       freeVideoSeconds: wholeNumber(input.freeVideoSeconds ?? current.freeVideoSeconds, 5, 3600, 'Free video seconds'),
       freeAudioSeconds: wholeNumber(input.freeAudioSeconds ?? current.freeAudioSeconds, 5, 3600, 'Free audio seconds'),
       receiverPercent: wholeNumber(input.receiverPercent ?? current.receiverPercent, 0, 100, 'Receiver share'),
-      agentPercent: wholeNumber(input.agentPercent ?? current.agentPercent, 0, 100, 'Agent share'),
+      coordinatorPercent: wholeNumber(input.coordinatorPercent ?? current.coordinatorPercent, 0, 100, 'Coordinator share'),
       maxCallsPerReceiverPerDay: wholeNumber(input.maxCallsPerReceiverPerDay ?? current.maxCallsPerReceiverPerDay, 1, 1000, 'Calls per person per day'),
       packs: Array.isArray(input.packs)
         ? input.packs.map((coins) => wholeNumber(coins, 10, 100000, 'Pack coins'))
@@ -160,8 +163,8 @@ export class DirectCallsService {
       giftReceiverPercent: wholeNumber(input.giftReceiverPercent ?? current.giftReceiverPercent, 0, 100, 'Gift receiver share'),
     };
     if (!next.giftAmounts.length || next.giftAmounts.length > 6) throw new BadRequestException('Offer between 1 and 6 gift amounts.');
-    if (next.receiverPercent + next.agentPercent > 100) {
-      throw new BadRequestException('Receiver and agent shares cannot exceed 100%.');
+    if (next.receiverPercent + next.coordinatorPercent > 100) {
+      throw new BadRequestException('Receiver and coordinator shares cannot exceed 100%.');
     }
     if (!next.packs.length || next.packs.length > 6) throw new BadRequestException('Offer between 1 and 6 coin packs.');
     await this.settingRepo.save(this.settingRepo.create({ key: SETTINGS_KEY, value: next }));
@@ -274,7 +277,7 @@ export class DirectCallsService {
 
   /**
    * Charges the next started minute of an active paid direct call and splits
-   * it between receiver, the receiver's agent and the platform. Returns
+   * it between receiver, the receiver's coordinator and the platform. Returns
    * charged:false (and charges nothing) when the caller cannot afford it.
    */
   async chargeMinute(callId: string): Promise<MinuteCharge> {
@@ -294,13 +297,13 @@ export class DirectCallsService {
       const balance = caller.coinBalance + caller.earnedCoinBalance;
       if (balance < rate) return { charged: false, balance };
 
-      const agent = receiver.createdByAgentId
-        ? await manager.getRepository(Agent).findOne({ where: { id: receiver.createdByAgentId, status: 'active' }, lock: { mode: 'pessimistic_write' } })
+      const coordinator = receiver.createdByCoordinatorId
+        ? await manager.getRepository(Coordinator).findOne({ where: { id: receiver.createdByCoordinatorId, status: 'active' }, lock: { mode: 'pessimistic_write' } })
         : null;
-      // Without an agent, the agent's share goes to the receiver.
-      const receiverCoins = Math.floor((rate * (settings.receiverPercent + (agent ? 0 : settings.agentPercent))) / 100);
-      const agentCoins = agent ? Math.floor((rate * settings.agentPercent) / 100) : 0;
-      const platformCoins = rate - receiverCoins - agentCoins;
+      // Without an coordinator, the coordinator's share goes to the receiver.
+      const receiverCoins = Math.floor((rate * (settings.receiverPercent + (coordinator ? 0 : settings.coordinatorPercent))) / 100);
+      const coordinatorCoins = coordinator ? Math.floor((rate * settings.coordinatorPercent) / 100) : 0;
+      const platformCoins = rate - receiverCoins - coordinatorCoins;
 
       // Spend purchased coins first, then earned coins.
       const fromPurchased = Math.min(caller.coinBalance, rate);
@@ -308,9 +311,9 @@ export class DirectCallsService {
       caller.earnedCoinBalance -= rate - fromPurchased;
       receiver.earnedCoinBalance += receiverCoins;
       await manager.getRepository(User).save([caller, receiver]);
-      if (agent) {
-        agent.earnedCoinBalance += agentCoins;
-        await manager.getRepository(Agent).save(agent);
+      if (coordinator) {
+        coordinator.earnedCoinBalance += coordinatorCoins;
+        await manager.getRepository(Coordinator).save(coordinator);
       }
 
       call.billedMinutes += 1;
@@ -322,11 +325,11 @@ export class DirectCallsService {
         userId: caller.id,
         senderId: caller.id,
         receiverId: receiver.id,
-        agentId: agent?.id ?? null,
+        coordinatorId: coordinator?.id ?? null,
         callId: call.id,
         grossCoins: rate,
         userCoins: receiverCoins,
-        agentCoins,
+        coordinatorCoins,
         platformCoins,
         label: `${call.callType === 'video' ? 'Video' : 'Audio'} call minute ${call.billedMinutes}`,
         payoutAccount: null,
@@ -345,7 +348,7 @@ export class DirectCallsService {
         .addSelect('COUNT(DISTINCT tx.callId)', 'paidCalls')
         .addSelect('COALESCE(SUM(tx.grossCoins), 0)', 'coins')
         .addSelect('COALESCE(SUM(tx.userCoins), 0)', 'receiverCoins')
-        .addSelect('COALESCE(SUM(tx.agentCoins), 0)', 'agentCoins')
+        .addSelect('COALESCE(SUM(tx.coordinatorCoins), 0)', 'coordinatorCoins')
         .addSelect('COALESCE(SUM(tx.platformCoins), 0)', 'platformCoins')
         .where("tx.type = 'call'");
       if (since) query.andWhere('tx.createdAt >= :since', { since });

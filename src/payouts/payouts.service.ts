@@ -5,7 +5,7 @@ import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'crypto';
 import { DataSource, Repository } from 'typeorm';
 import { User } from '../users/user.entity';
-import { Agent } from '../agents/agent.entity';
+import { Coordinator } from '../coordinators/coordinator.entity';
 import { CoinTransaction } from '../users/coin-transaction.entity';
 import { PayoutAccount, PayoutMethod, PayoutOwnerType } from './payout-account.entity';
 
@@ -192,28 +192,28 @@ export class PayoutsService {
     const valuePaise = Math.max(1, Number(process.env.COIN_WITHDRAWAL_VALUE_PAISE || 100));
 
     const transaction = await this.dataSource.transaction(async (manager) => {
-      const owner = ownerType === 'agent'
-        ? await manager.getRepository(Agent).findOne({ where: { id: ownerId }, lock: { mode: 'pessimistic_write' } })
+      const owner = ownerType === 'coordinator'
+        ? await manager.getRepository(Coordinator).findOne({ where: { id: ownerId }, lock: { mode: 'pessimistic_write' } })
         : await manager.getRepository(User).findOne({ where: { id: ownerId }, lock: { mode: 'pessimistic_write' } });
       if (!owner) throw new NotFoundException('Account not found.');
       if (owner.earnedCoinBalance < coins) {
         throw new BadRequestException(`Your withdrawable balance is ${owner.earnedCoinBalance} coins.`);
       }
       owner.earnedCoinBalance -= coins;
-      if (owner instanceof Agent) await manager.getRepository(Agent).save(owner);
+      if (owner instanceof Coordinator) await manager.getRepository(Coordinator).save(owner);
       else await manager.getRepository(User).save(owner);
       return manager.getRepository(CoinTransaction).save(manager.getRepository(CoinTransaction).create({
         type: 'withdrawal',
         status: 'pending',
         userId: ownerType === 'user' ? ownerId : null,
         receiverId: ownerType === 'user' ? ownerId : null,
-        agentId: ownerType === 'agent' ? ownerId : null,
+        coordinatorId: ownerType === 'coordinator' ? ownerId : null,
         senderId: null,
         grossCoins: coins,
         userCoins: coins,
         platformCoins: 0,
         amountPaise: coins * valuePaise,
-        label: `Manual ${payout.method} withdrawal${ownerType === 'agent' ? ' (agent)' : ''}`,
+        label: `Manual ${payout.method} withdrawal${ownerType === 'coordinator' ? ' (coordinator)' : ''}`,
         payoutAccount: payout.method === 'upi' ? payout.upiId ?? null : payout.accountNumber ?? null,
         payoutDetails: JSON.stringify(payout),
         gatewayOrderId: null,
@@ -273,7 +273,7 @@ export class PayoutsService {
   }
 
   /**
-   * Emails the member or agent when the super admin marks their withdrawal
+   * Emails the member or coordinator when the super admin marks their withdrawal
    * paid or rejected. Never throws: the status change has already happened.
    */
   async notifyWithdrawalStatus(transactionId: string) {
@@ -282,8 +282,8 @@ export class PayoutsService {
       if (!tx || tx.type !== 'withdrawal' || (tx.status !== 'completed' && tx.status !== 'rejected')) return;
       const owner = tx.userId
         ? await this.dataSource.getRepository(User).findOne({ where: { id: tx.userId }, select: { id: true, name: true, email: true } })
-        : tx.agentId
-          ? await this.dataSource.getRepository(Agent).findOne({ where: { id: tx.agentId }, select: { id: true, name: true, email: true } })
+        : tx.coordinatorId
+          ? await this.dataSource.getRepository(Coordinator).findOne({ where: { id: tx.coordinatorId }, select: { id: true, name: true, email: true } })
           : null;
       const mailer = this.mailer();
       if (!owner?.email || !mailer) return;
@@ -325,7 +325,7 @@ export class PayoutsService {
   /** The owner's latest withdrawal requests with masked account details. */
   async withdrawals(ownerType: PayoutOwnerType, ownerId: string) {
     const rows = await this.dataSource.getRepository(CoinTransaction).find({
-      where: ownerType === 'agent' ? { type: 'withdrawal', agentId: ownerId } : { type: 'withdrawal', userId: ownerId },
+      where: ownerType === 'coordinator' ? { type: 'withdrawal', coordinatorId: ownerId } : { type: 'withdrawal', userId: ownerId },
       order: { createdAt: 'DESC' },
       take: 20,
     });

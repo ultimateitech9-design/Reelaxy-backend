@@ -1,6 +1,6 @@
 import 'reflect-metadata';
 import { NestFactory } from '@nestjs/core';
-import { ValidationPipe } from '@nestjs/common';
+import { Logger, ValidationPipe } from '@nestjs/common';
 import { AppModule } from './app.module';
 import helmet from 'helmet';
 import * as dotenv from 'dotenv';
@@ -45,6 +45,13 @@ async function bootstrap() {
   app.useBodyParser('urlencoded', { limit: '10mb', extended: true });
 
   const dataSource = app.get(DataSource);
+  const [databaseConnection] = await dataSource.query(
+    'SELECT DATABASE() AS databaseName, @@port AS port',
+  );
+  const databaseHost = 'host' in dataSource.options ? dataSource.options.host : 'localhost';
+  new Logger('Database').log(
+    `MySQL connected: database=${databaseConnection.databaseName}, host=${databaseHost}, port=${databaseConnection.port}`,
+  );
   const jwtService = app.get(JwtService, { strict: false });
   let maintenanceCache = { enabled: false, checkedAt: 0 };
 

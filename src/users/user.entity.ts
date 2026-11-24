@@ -11,12 +11,12 @@ export class User {
   @PrimaryGeneratedColumn('uuid')
   id: string;
 
-  @Column({ type: 'varchar', length: 36, nullable: true })
-  createdByAgentId: string | null;
+  @Column({ name: 'createdByAgentId', type: 'varchar', length: 36, nullable: true })
+  createdByCoordinatorId: string | null;
 
-  // Latest primary-email change made by a user whose account was created by an agent.
-  @Column({ nullable: true, type: 'datetime' })
-  agentEmailChangedAt: Date | null;
+  // Latest primary-email change made by a user whose account was created by an coordinator.
+  @Column({ name: 'agentEmailChangedAt', nullable: true, type: 'datetime' })
+  coordinatorEmailChangedAt: Date | null;
 
   @Column({ length: 150 })
   name: string;

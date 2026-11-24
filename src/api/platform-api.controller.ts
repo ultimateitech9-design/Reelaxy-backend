@@ -15,10 +15,10 @@ import { PlatformSetting } from '../platform/platform-setting.entity';
 import { PlatformRole } from '../platform/role.entity';
 import { IsEmail, IsString, MinLength, IsOptional, IsNumber, IsArray, IsBoolean, IsDateString, IsInt, Max, MaxLength, Min, Matches } from 'class-validator';
 import { Roles, RolesGuard } from '../auth/roles.guard';
-import { Agent } from '../agents/agent.entity';
+import { Coordinator } from '../coordinators/coordinator.entity';
 import { UserActivityService } from '../users/user-activity.service';
 import { AdminAccountsService } from '../admin/admin-accounts.service';
-import { AdminAgentStatusDto } from '../admin/admin-agent-status.dto';
+import { AdminCoordinatorStatusDto } from '../admin/admin-coordinator-status.dto';
 import { PaymentsService } from '../payments/payments.service';
 import { requestContext } from '../common/request-context';
 import { CoinTransaction } from '../users/coin-transaction.entity';
@@ -295,13 +295,13 @@ export class PlatformApiController {
   ) {}
 
   private async creationOrigins(users: User[]) {
-    const ids = [...new Set(users.map(user => user.createdByAgentId).filter(Boolean))];
-    const agents = ids.length ? await this.userRepo.manager.getRepository(Agent).find({ where: { id: In(ids) }, select: ['id', 'name', 'email', 'createdAt'] }) : [];
-    const byId = new Map(agents.map(agent => [agent.id, agent]));
+    const ids = [...new Set(users.map(user => user.createdByCoordinatorId).filter(Boolean))];
+    const coordinators = ids.length ? await this.userRepo.manager.getRepository(Coordinator).find({ where: { id: In(ids) }, select: ['id', 'name', 'email', 'createdAt'] }) : [];
+    const byId = new Map(coordinators.map(coordinator => [coordinator.id, coordinator]));
     return new Map(users.map(user => [user.id, {
-      registrationSource: user.createdByAgentId ? 'agent' : 'direct',
-      createdByAgentId: user.createdByAgentId || null,
-      createdByAgent: byId.get(user.createdByAgentId) || null,
+      registrationSource: user.createdByCoordinatorId ? 'coordinator' : 'direct',
+      createdByCoordinatorId: user.createdByCoordinatorId || null,
+      createdByCoordinator: byId.get(user.createdByCoordinatorId) || null,
     }]));
   }
 
@@ -467,8 +467,8 @@ export class PlatformApiController {
   @Get('dashboard')
   async dashboard(@Req() request: any) {
     const isSuperAdmin = this.requestUser(request).role === 'super_admin';
-    const agents = isSuperAdmin
-      ? await this.userRepo.manager.getRepository(Agent).find({ where: { status: Not('deleted') }, select: ['id', 'createdAt', 'status'] }) : [];
+    const coordinators = isSuperAdmin
+      ? await this.userRepo.manager.getRepository(Coordinator).find({ where: { status: Not('deleted') }, select: ['id', 'createdAt', 'status'] }) : [];
     const callRepo = this.userRepo.manager.getRepository(VideoCall);
     const [totalUsers, onlineUsers, pendingReports, users, calls, reports, recharges, coinsInWallets] = await Promise.all([
       this.userRepo.count({ where: { role: 'user' } }),
@@ -497,14 +497,14 @@ export class PlatformApiController {
     };
     users.forEach((user) => { ensureMonth(user.createdAt).users += 1; });
     calls.forEach((call) => { ensureMonth(call.createdAt).calls += 1; });
-    const agentStats = isSuperAdmin ? [
-      { label: 'Agent-created Users', value: String(await this.userRepo.countBy({ createdByAgentId: Not(IsNull()) })), delta: 'Live DB' },
-      { label: 'Registered Agents', value: String(agents.length), delta: 'Live DB' },
+    const coordinatorStats = isSuperAdmin ? [
+      { label: 'Coordinator-created Users', value: String(await this.userRepo.countBy({ createdByCoordinatorId: Not(IsNull()) })), delta: 'Live DB' },
+      { label: 'Registered Coordinators', value: String(coordinators.length), delta: 'Live DB' },
     ] : [];
 
     return {
       stats: [
-        ...agentStats,
+        ...coordinatorStats,
         { label: 'Total Users', value: String(totalUsers), delta: this.periodDelta(countPeriod(users, currentStart, now), countPeriod(users, previousStart, currentStart)) },
         { label: 'Online Now', value: String(onlineUsers), delta: 'Live' },
         { label: 'Calls', value: String(calls.length), delta: this.periodDelta(countPeriod(calls, currentStart, now), countPeriod(calls, previousStart, currentStart)) },
@@ -517,10 +517,10 @@ export class PlatformApiController {
     };
   }
 
-  @Get('agents')
+  @Get('coordinators')
   @Roles('admin', 'super_admin')
-  agents(@Query('search') search?: string, @Query('page') page?: string, @Query('limit') limit?: string) {
-    return this.adminAccounts.agents(search, page, limit);
+  coordinators(@Query('search') search?: string, @Query('page') page?: string, @Query('limit') limit?: string) {
+    return this.adminAccounts.coordinators(search, page, limit);
   }
 
   @Get('accounts')
@@ -529,22 +529,22 @@ export class PlatformApiController {
     return this.adminAccounts.accounts(search, status, page, limit);
   }
 
-  @Get('agents/:id')
+  @Get('coordinators/:id')
   @Roles('admin', 'super_admin')
-  agentDetails(@Param('id', ParseUUIDPipe) id: string, @Query('page') page?: string, @Query('limit') limit?: string) {
-    return this.adminAccounts.agentDetails(id, page, limit);
+  coordinatorDetails(@Param('id', ParseUUIDPipe) id: string, @Query('page') page?: string, @Query('limit') limit?: string) {
+    return this.adminAccounts.coordinatorDetails(id, page, limit);
   }
 
-  @Patch('agents/:id/status')
+  @Patch('coordinators/:id/status')
   @Roles('admin', 'super_admin')
-  agentStatus(@Param('id', ParseUUIDPipe) id: string, @Body() body: AdminAgentStatusDto, @Req() request: any) {
-    return this.adminAccounts.manageAgent(id, body.status, this.requestUser(request).userId);
+  coordinatorStatus(@Param('id', ParseUUIDPipe) id: string, @Body() body: AdminCoordinatorStatusDto, @Req() request: any) {
+    return this.adminAccounts.manageCoordinator(id, body.status, this.requestUser(request).userId);
   }
 
-  @Delete('agents/:id')
+  @Delete('coordinators/:id')
   @Roles('admin', 'super_admin')
-  deleteAgent(@Param('id', ParseUUIDPipe) id: string, @Req() request: any) {
-    return this.adminAccounts.manageAgent(id, 'deleted', this.requestUser(request).userId);
+  deleteCoordinator(@Param('id', ParseUUIDPipe) id: string, @Req() request: any) {
+    return this.adminAccounts.manageCoordinator(id, 'deleted', this.requestUser(request).userId);
   }
 
   @Get('users')
@@ -565,7 +565,7 @@ export class PlatformApiController {
         'user.id', 'user.name', 'user.email', 'user.phone', 'user.role', 'user.plan',
         'user.gender',
         'user.city', 'user.lastSeen', 'user.updatedAt', 'user.createdAt',
-        'user.isVerified', 'user.status', 'user.createdByAgentId',
+        'user.isVerified', 'user.status', 'user.createdByCoordinatorId',
       ])
       .orderBy('user.createdAt', 'DESC');
 
@@ -588,7 +588,7 @@ export class PlatformApiController {
         LOWER(user.id) LIKE :term OR
         LOWER(user.name) LIKE :term OR
         LOWER(user.email) LIKE :term
-        ${actor.role === 'super_admin' ? 'OR EXISTS (SELECT 1 FROM agents registrationAgent WHERE registrationAgent.id = user.createdByAgentId AND (LOWER(registrationAgent.name) LIKE :term OR LOWER(registrationAgent.email) LIKE :term))' : ''}
+        ${actor.role === 'super_admin' ? 'OR EXISTS (SELECT 1 FROM agents registrationCoordinator WHERE registrationCoordinator.id = user.createdByCoordinatorId AND (LOWER(registrationCoordinator.name) LIKE :term OR LOWER(registrationCoordinator.email) LIKE :term))' : ''}
       )`, { term: `%${term}%` });
     }
 

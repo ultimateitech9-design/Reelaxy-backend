@@ -8,29 +8,29 @@ if (process.env.NODE_ENV === 'production' || !['localhost', '127.0.0.1'].include
 const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
 const mysql = require('mysql2/promise');
 const { JwtService } = require('@nestjs/jwt');
-const agentId = randomUUID();
+const coordinatorId = randomUUID();
 const viewerId = randomUUID();
 const name = `Photo test ${randomUUID()}`;
 const api = 'http://localhost:5002';
 let browser, db;
 async function run() {
   db = await mysql.createConnection({ host: process.env.DB_HOST, port: Number(process.env.DB_PORT || 3306), user: process.env.DB_USER, password: process.env.DB_PASSWORD, database: process.env.DB_NAME });
-  await db.execute('INSERT INTO agents (id,name,email,password) VALUES (?,?,?,?)', [agentId, 'Photo Test Agent', `${agentId}@example.invalid`, 'test-only-not-a-login']);
+  await db.execute('INSERT INTO agents (id,name,email,password) VALUES (?,?,?,?)', [coordinatorId, 'Photo Test Coordinator', `${coordinatorId}@example.invalid`, 'test-only-not-a-login']);
   const jwt = new JwtService();
-  const token = jwt.sign({ sub: agentId, version: 0 }, { secret: `${process.env.JWT_SECRET.trim()}:reelaxy-agent`, audience: 'agent', expiresIn: '10m' });
+  const token = jwt.sign({ sub: coordinatorId, version: 0 }, { secret: `${process.env.JWT_SECRET.trim()}:reelaxy-coordinator`, audience: 'coordinator', expiresIn: '10m' });
   browser = await chromium.launch({ headless: true, ...(process.env.PLAYWRIGHT_EXECUTABLE ? { executablePath: process.env.PLAYWRIGHT_EXECUTABLE } : {}) });
   const page = await browser.newPage({ reducedMotion: 'reduce' });
   const errors = [];
   page.on('pageerror', error => errors.push(error.message));
-  await page.addInitScript(value => sessionStorage.setItem('reelaxy_agent_token', value), token);
-  await page.goto('http://localhost:3002/agent/dashboard', { waitUntil: 'networkidle', timeout: 120000 });
+  await page.addInitScript(value => sessionStorage.setItem('reelaxy_coordinator_token', value), token);
+  await page.goto('http://localhost:3002/coordinator/dashboard', { waitUntil: 'networkidle', timeout: 120000 });
   await page.getByRole('button', { name: 'Create accounts', exact: true }).last().click();
   await page.waitForFunction(() => { const panel = document.querySelector('.ag-create-panel'); return panel && Math.abs(panel.getBoundingClientRect().top - 24) < 4; });
   await page.evaluate(() => window.scrollTo({ top: 0, behavior: 'instant' }));
   await page.getByRole('button', { name: 'Create accounts', exact: true }).first().click();
   await page.waitForFunction(() => Math.abs(document.querySelector('.ag-create-panel').getBoundingClientRect().top - 24) < 4);
   await page.getByPlaceholder('Full name', { exact: true }).fill(name);
-  await page.getByPlaceholder('user@gmail.com').fill(`${agentId}-user@example.invalid`);
+  await page.getByPlaceholder('user@gmail.com').fill(`${coordinatorId}-user@example.invalid`);
   await page.getByPlaceholder('At least 8 characters').fill('Photo-Test-Password-123');
   await page.getByLabel('Date of birth *', { exact: true }).fill('1998-04-15');
   await page.getByPlaceholder('e.g. Mumbai').fill('Mumbai');
@@ -73,11 +73,11 @@ async function run() {
   await page.getByText('5/5 photos', { exact: false }).waitFor();
   const savedImages = await page.locator('.ag-draft-photos img').evaluateAll(images => images.map(img => img.src));
   assert.equal(savedImages.length, 5);
-  const rejected = await fetch(`${api}/agents/users/bulk`, { method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ consentConfirmed: true, users: [{ name: 'Too many photos', email: `${agentId}-rejected@example.invalid`, password: 'Photo-Test-Password-123', birthDate: '1998-04-15', gender: 'female', city: 'Mumbai', photos: [...savedImages, savedImages[0]] }] }) });
+  const rejected = await fetch(`${api}/coordinators/users/bulk`, { method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ consentConfirmed: true, users: [{ name: 'Too many photos', email: `${coordinatorId}-rejected@example.invalid`, password: 'Photo-Test-Password-123', birthDate: '1998-04-15', gender: 'female', city: 'Mumbai', photos: [...savedImages, savedImages[0]] }] }) });
   assert.equal(rejected.status, 400);
   const createButton = page.getByRole('button', { name: 'Create 1 account', exact: true });
   await createButton.click(); await page.getByText('Login details are ready', { exact: true }).waitFor();
-  const [users] = await db.execute('SELECT id,photos,photosVisibleToNonMatches FROM users WHERE createdByAgentId=?', [agentId]);
+  const [users] = await db.execute('SELECT id,photos,photosVisibleToNonMatches FROM users WHERE createdByAgentId=?', [coordinatorId]);
   assert.equal(users.length, 1);
   const photos = typeof users[0].photos === 'string' ? JSON.parse(users[0].photos) : users[0].photos;
   assert.deepEqual(photos, savedImages); assert.equal(users[0].photosVisibleToNonMatches, 1);
@@ -103,5 +103,5 @@ async function run() {
 }
 run().catch(error => { console.error(error.message); process.exitCode = 1; }).finally(async () => {
   if (browser) await browser.close();
-  if (db) { await db.execute('DELETE FROM users WHERE createdByAgentId=? OR id=?', [agentId, viewerId]); await db.execute('DELETE FROM agents WHERE id=?', [agentId]); await db.end(); }
+  if (db) { await db.execute('DELETE FROM users WHERE createdByAgentId=? OR id=?', [coordinatorId, viewerId]); await db.execute('DELETE FROM agents WHERE id=?', [coordinatorId]); await db.end(); }
 });

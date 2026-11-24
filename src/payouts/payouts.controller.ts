@@ -2,7 +2,7 @@ import { Body, Controller, Delete, Get, Param, ParseUUIDPipe, Patch, Post, Reque
 import { AuthGuard } from '@nestjs/passport';
 import { PayoutInput, PayoutsService, WithdrawalRequest } from './payouts.service';
 
-/** Withdrawals and saved payout accounts for members (agents use /agents/...). */
+/** Withdrawals and saved payout accounts for members (coordinators use /coordinators/...). */
 @UseGuards(AuthGuard('jwt'))
 @Controller('wallet')
 export class PayoutsController {
