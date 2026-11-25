@@ -572,15 +572,15 @@ export class MessagesGateway implements OnGatewayConnection, OnGatewayDisconnect
   /** Gift during a call: charged to the sender, receiver notified at once. */
   @SubscribeMessage('sendCallGift')
   async handleSendCallGift(
-    @MessageBody() data: { callId: string; amount: number },
+    @MessageBody() data: { callId: string; amount?: number; gift?: string },
     @ConnectedSocket() client: Socket,
   ) {
     const senderId = this.getUserIdForSocket(client);
     if (!senderId) return { error: 'Not authenticated' };
     try {
-      const gift = await this.directCalls.sendCallGift(senderId, data.callId, data.amount);
-      this.emitToUser(gift.receiverId, 'callGiftReceived', { callId: data.callId, senderName: gift.senderName, coins: gift.coins });
-      return { ok: true, coins: gift.coins, balance: gift.balance };
+      const gift = await this.directCalls.sendCallGift(senderId, data.callId, Number(data.amount), data.gift);
+      this.emitToUser(gift.receiverId, 'callGiftReceived', { callId: data.callId, senderName: gift.senderName, coins: gift.coins, giftLabel: gift.giftLabel, giftEmoji: gift.giftEmoji });
+      return { ok: true, coins: gift.coins, giftLabel: gift.giftLabel, balance: gift.balance };
     } catch (error: any) {
       const message = error?.message || 'Gift could not be sent.';
       return message === UPGRADE_REQUIRED

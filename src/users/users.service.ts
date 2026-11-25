@@ -1,4 +1,5 @@
 import { normalizeLanguages } from '../common/spoken-languages';
+import { findGift } from '../common/gift-catalog';
 import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { EventEmitter } from 'node:events';
 import { createHmac } from 'node:crypto';
@@ -435,7 +436,9 @@ export class UsersService {
   }
 
   async sendGift(userId: string, receiverId: string, amount: number, label?: string) {
-    const coins = Number(amount);
+    // A catalog gift always costs its catalog price, whatever amount the client sent.
+    const catalogGift = findGift(label);
+    const coins = catalogGift ? catalogGift.price : Number(amount);
     if (!receiverId || receiverId === userId) throw new BadRequestException('Choose another user to receive this gift.');
     if (!Number.isInteger(coins) || coins < 1) throw new BadRequestException('Invalid gift amount.');
     return this.dataSource.transaction(async (manager) => {

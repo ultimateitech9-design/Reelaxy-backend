@@ -1,4 +1,5 @@
 import { applyBlock, BlockScope, callsBlocked } from '../matches/block-scope';
+import { findGift } from '../common/gift-catalog';
 import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
 import { DataSource, In, IsNull, MoreThanOrEqual, Not, Repository } from 'typeorm';
@@ -369,10 +370,14 @@ export class DirectCallsService {
    * giftReceiverPercent of it as withdrawable earnings; the rest is the
    * platform's. Returns what the socket layer needs to notify the receiver.
    */
-  async sendCallGift(senderId: string, callId: string, amount: number) {
+  async sendCallGift(senderId: string, callId: string, amount: number, giftLabel?: string) {
     const settings = await this.settings();
-    const coins = Number(amount);
-    if (!settings.giftAmounts.includes(coins)) throw new BadRequestException('Choose one of the gift amounts.');
+    // Named gifts (rose, kiss, teddy…) are priced from the server catalog; plain coin
+    // gifts must be one of the amounts the super admin configured.
+    const gift = giftLabel ? findGift(giftLabel) : undefined;
+    if (giftLabel && !gift) throw new BadRequestException('This gift is not available.');
+    const coins = gift ? gift.price : Number(amount);
+    if (!gift && !settings.giftAmounts.includes(coins)) throw new BadRequestException('Choose one of the gift amounts.');
     return this.dataSource.transaction(async (manager) => {
       const call = await manager.getRepository(VideoCall).findOne({ where: { id: callId } });
       if (!call || call.status !== 'active' || (call.callerId !== senderId && call.receiverId !== senderId)) {
@@ -401,10 +406,10 @@ export class DirectCallsService {
         grossCoins: coins,
         userCoins: receiverCoins,
         platformCoins: coins - receiverCoins,
-        label: `Call gift ${coins}`,
+        label: gift ? `Call gift: ${gift.label}` : `Call gift ${coins}`,
         payoutAccount: null,
       }));
-      return { receiverId, senderName: sender.name, coins, balance: sender.coinBalance + sender.earnedCoinBalance };
+      return { receiverId, senderName: sender.name, coins, giftLabel: gift?.label ?? null, giftEmoji: gift?.emoji ?? null, balance: sender.coinBalance + sender.earnedCoinBalance };
     });
   }
 
