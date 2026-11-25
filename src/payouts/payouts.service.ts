@@ -1,5 +1,6 @@
+import { isFemaleGender } from '../common/gender';
 import { renderEmail } from '../mail/email-layout';
-import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import * as nodemailer from 'nodemailer';
 import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'crypto';
@@ -183,7 +184,16 @@ export class PayoutsService {
    * pending withdrawal; the super admin pays it manually and marks it paid,
    * or rejects it (which returns the coins).
    */
+  /** Members: only women's (non-guest) accounts can withdraw. Men and guests spend their coins. */
+  private async assertMemberCanWithdraw(userId: string) {
+    const member = await this.dataSource.getRepository(User).findOne({ where: { id: userId }, select: ['id', 'gender', 'isGuest'] });
+    if (!member || member.isGuest || !isFemaleGender(member.gender)) {
+      throw new ForbiddenException('Withdrawals are available for women\'s accounts only. Your coins can be used for calls and gifts.');
+    }
+  }
+
   async requestWithdrawal(ownerType: PayoutOwnerType, ownerId: string, request: WithdrawalRequest) {
+    if (ownerType === 'user') await this.assertMemberCanWithdraw(ownerId);
     const coins = Number(request.coins);
     if (!Number.isInteger(coins) || coins < MIN_WITHDRAWAL_COINS || coins > 1_000_000) {
       throw new BadRequestException(`Minimum withdrawal is ${MIN_WITHDRAWAL_COINS} coins.`);
@@ -196,6 +206,13 @@ export class PayoutsService {
         ? await manager.getRepository(Coordinator).findOne({ where: { id: ownerId }, lock: { mode: 'pessimistic_write' } })
         : await manager.getRepository(User).findOne({ where: { id: ownerId }, lock: { mode: 'pessimistic_write' } });
       if (!owner) throw new NotFoundException('Account not found.');
+      // Members: only women's (non-guest) accounts can withdraw. Men and guests spend their coins.
+      if (ownerType === 'user') {
+        const member = owner as User;
+        if (member.isGuest || !isFemaleGender(member.gender)) {
+          throw new ForbiddenException('Withdrawals are available for women\'s accounts only. Your coins can be used for calls and gifts.');
+        }
+      }
       if (owner.earnedCoinBalance < coins) {
         throw new BadRequestException(`Your withdrawable balance is ${owner.earnedCoinBalance} coins.`);
       }

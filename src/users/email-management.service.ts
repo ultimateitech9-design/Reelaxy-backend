@@ -1,3 +1,4 @@
+import { ReferralsService } from '../referrals/referrals.service';
 import { renderEmail } from '../mail/email-layout';
 import { BadRequestException, ConflictException, ForbiddenException, Injectable, ServiceUnavailableException, UnauthorizedException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
@@ -14,7 +15,7 @@ const TEN_MINUTES = 600_000; const RESEND_MS = 60_000; const MAX_ATTEMPTS = 5; c
 @Injectable()
 export class EmailManagementService {
   private transporter: nodemailer.Transporter | null = null;
-  constructor(@InjectRepository(User) private users: Repository<User>, @InjectRepository(UserEmail) private emails: Repository<UserEmail>, @InjectRepository(UserEmailChallenge) private challenges: Repository<UserEmailChallenge>, private dataSource: DataSource) {}
+  constructor(@InjectRepository(User) private users: Repository<User>, @InjectRepository(UserEmail) private emails: Repository<UserEmail>, @InjectRepository(UserEmailChallenge) private challenges: Repository<UserEmailChallenge>, private dataSource: DataSource, private referrals: ReferralsService) {}
   private normal(email: string) { return email.trim().toLowerCase(); }
   private secret() { const secret = process.env.OTP_HASH_SECRET?.trim() || process.env.JWT_SECRET?.trim(); if (!secret) throw new ServiceUnavailableException('OTP service is not configured.'); return secret; }
   private hash(email: string, otp: string) { return createHmac('sha256', this.secret()).update(`email-management:${email}:${otp}`).digest('hex'); }
@@ -75,6 +76,7 @@ export class EmailManagementService {
       await manager.getRepository(UserEmail).save(manager.getRepository(UserEmail).create({ userId, email: challenge.email, isPrimary: true, loginEnabled: true, verifiedAt: now }));
     });
     await this.challenges.delete(challenge.id);
+    await this.referrals.tryReward(userId);
     return { message: 'Your account is now permanent. Log in any time with this email and password.', email: challenge.email, name: newName };
   }
 

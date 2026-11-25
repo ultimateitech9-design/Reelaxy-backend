@@ -1,3 +1,4 @@
+import { ReferralsService } from '../referrals/referrals.service';
 import { normalizeLanguages } from '../common/spoken-languages';
 import {
   Injectable, BadRequestException, ConflictException, UnauthorizedException,
@@ -33,6 +34,7 @@ export class AuthService {
     private readonly userEmailRepo: Repository<UserEmail>,
     private readonly jwtService: JwtService,
     private readonly registrationOtpService: RegistrationOtpService,
+    private readonly referrals: ReferralsService,
   ) {}
 
   private decryptOrUsePlainPassword(password: string): string {
@@ -225,6 +227,8 @@ export class AuthService {
       emailVerifiedAt: new Date(),
     });
     const saved = await this.userRepo.save(user);
+    await this.referrals.attach(saved.id, dto.referralCode);
+    await this.referrals.tryReward(saved.id);
     this.registrationOtpService.sendWelcomeEmail(saved.email, saved.name);
     const { password: _, ...safe } = saved as any;
     return { message: 'Account created successfully', user: safe };
@@ -267,7 +271,7 @@ export class AuthService {
     };
   }
 
-  async googleLogin(credential: string, context: LoginContext = {}) {
+  async googleLogin(credential: string, context: LoginContext = {}, referralCode?: string) {
     const clientId = process.env.GOOGLE_CLIENT_ID?.trim();
     if (!clientId) {
       throw new UnauthorizedException('Google sign-in is not configured on the server.');
@@ -315,6 +319,7 @@ export class AuthService {
         emailVerifiedAt: new Date(),
       }));
       isNewUser = true;
+      await this.referrals.attach(user.id, referralCode);
       this.registrationOtpService.sendWelcomeEmail(user.email, user.name);
     }
 
@@ -344,7 +349,7 @@ export class AuthService {
    * name and no email/password from the user. The account lives until the
    * guest logs out (see endGuestSession), and the name can be edited.
    */
-  async guestLogin(context: LoginContext = {}) {
+  async guestLogin(context: LoginContext = {}, referralCode?: string) {
     const ip = context.ipAddress || 'unknown';
     const hourAgo = Date.now() - 60 * 60 * 1000;
     const recent = (this.guestCreations.get(ip) || []).filter((at) => at > hourAgo);
@@ -367,6 +372,9 @@ export class AuthService {
       onboardingCompleted: true,
       isGuest: true,
     }));
+
+    // Guests can join with an invite; the reward is paid once they make the account permanent.
+    await this.referrals.attach(user.id, referralCode);
 
     const session = await this.startSession(user, context);
     const token = this.signUserToken(user, session.sessionId);

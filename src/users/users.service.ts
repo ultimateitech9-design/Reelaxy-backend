@@ -1,3 +1,4 @@
+import { ReferralsService } from '../referrals/referrals.service';
 import { normalizeLanguages } from '../common/spoken-languages';
 import { findGift } from '../common/gift-catalog';
 import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
@@ -37,6 +38,7 @@ export class UsersService {
     private readonly coinTransactionRepo: Repository<CoinTransaction>,
     private readonly dataSource: DataSource,
     private readonly payouts: PayoutsService,
+    private readonly referrals: ReferralsService,
   ) {}
 
   serializeUser(user: User): any {
@@ -166,6 +168,8 @@ export class UsersService {
 
     // Only update fields that are part of the DTO (safe update)
     await this.userRepo.update(id, sanitizedData as any);
+    // Setting a gender can complete a pending referral (the reward depends on it).
+    if (sanitizedData.gender) await this.referrals.tryReward(id);
     return this.findById(id);
   }
 

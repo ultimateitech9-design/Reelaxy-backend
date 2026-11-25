@@ -77,14 +77,14 @@ export class AuthController {
   /** Fast login: creates a guest account and signs it in, no form needed. */
   @Post('guest')
   @HttpCode(HttpStatus.OK)
-  guestLogin(@Req() request: Request) {
-    return this.authService.guestLogin(this.loginContext(request));
+  guestLogin(@Req() request: Request, @Body() body: { referralCode?: string } = {}) {
+    return this.authService.guestLogin(this.loginContext(request), typeof body?.referralCode === 'string' ? body.referralCode.slice(0, 16) : undefined);
   }
 
   @Post('google')
   @HttpCode(HttpStatus.OK)
   googleLogin(@Body() dto: GoogleAuthDto, @Req() request: Request) {
-    return this.authService.googleLogin(dto.credential, this.loginContext(request));
+    return this.authService.googleLogin(dto.credential, this.loginContext(request), dto.referralCode);
   }
 
   @Post('admin/login')

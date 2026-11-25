@@ -82,6 +82,16 @@ export class User {
   @Column({ type: 'json', nullable: true })
   spokenLanguages: string[] | null;
 
+  /** Referral program: this user's share code, who invited them, and when the reward was paid. */
+  @Column({ type: 'varchar', length: 16, nullable: true, unique: true })
+  referralCode: string | null;
+
+  @Column({ type: 'char', length: 36, nullable: true })
+  referredById: string | null;
+
+  @Column({ type: 'datetime', nullable: true })
+  referralRewardedAt: Date | null;
+
   @Column({ type: 'json', nullable: true })
   personalityWords: string[];
 

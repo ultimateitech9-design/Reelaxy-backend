@@ -1,3 +1,4 @@
+import { ReferralsModule } from '../referrals/referrals.module';
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { JwtModule } from '@nestjs/jwt';
@@ -22,6 +23,7 @@ if (!jwtSecret) {
 
 @Module({
   imports: [
+    ReferralsModule,
     TypeOrmModule.forFeature([User, AuditLog, EmailRegistrationOtp, UserEmail]),
     PassportModule,
     JwtModule.register({

@@ -31,6 +31,12 @@ export class RegisterDto {
   @IsString({ each: true })
   spokenLanguages?: string[];
 
+  /** Share code of the member who invited this person (from a ?ref= link). */
+  @IsOptional()
+  @IsString()
+  @MaxLength(16)
+  referralCode?: string;
+
   @IsOptional()
   @IsLatitude()
   locationLatitude?: number;

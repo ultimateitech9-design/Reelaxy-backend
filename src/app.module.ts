@@ -1,3 +1,4 @@
+import { ReferralsModule } from './referrals/referrals.module';
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { JwtModule } from '@nestjs/jwt';
@@ -29,6 +30,7 @@ dotenv.config();
 
 @Module({
   imports: [
+    ReferralsModule,
     TypeOrmModule.forRoot({
       type: 'mysql',
       host: process.env.DB_HOST || 'localhost',
