@@ -191,32 +191,31 @@ export class LocationsService {
     return { path: locality[0] ? `/video-chat/${locality[0].stateSlug}/${locality[0].citySlug}/${locality[0].slug}` : null };
   }
 
-  /** State + city URLs for the sitemap, split into files of SITEMAP_PAGE. Localities come later. */
-  async sitemapInfo() {
-    const [{ n: states }] = await this.dataSource.query('SELECT COUNT(*) AS n FROM location_states WHERE isActive = 1');
-    const [{ n: cities }] = await this.dataSource.query(
-      'SELECT COUNT(*) AS n FROM location_cities c JOIN location_states s ON s.id = c.stateId AND s.isActive = 1 WHERE c.isActive = 1');
-    const total = Number(states) + Number(cities);
+  /** State and city URLs use separate sitemap files. Localities come later. */
+  async sitemapInfo(kind: string) {
+    if (kind !== 'states' && kind !== 'cities') throw new BadRequestException('Unknown sitemap kind.');
+    const [{ n }] = kind === 'states'
+      ? await this.dataSource.query('SELECT COUNT(*) AS n FROM location_states WHERE isActive = 1')
+      : await this.dataSource.query('SELECT COUNT(*) AS n FROM location_cities c JOIN location_states s ON s.id = c.stateId AND s.isActive = 1 WHERE c.isActive = 1');
+    const total = Number(n);
     return { total, pageSize: SITEMAP_PAGE, pages: Math.max(1, Math.ceil(total / SITEMAP_PAGE)) };
   }
 
-  async sitemapPage(rawPage: number) {
+  async sitemapPage(kind: string, rawPage: number) {
+    if (kind !== 'states' && kind !== 'cities') throw new BadRequestException('Unknown sitemap kind.');
     const page = Math.max(0, Math.floor(rawPage) || 0);
-    const stateRows = await this.dataSource.query('SELECT slug, updatedAt FROM location_states WHERE isActive = 1 ORDER BY id');
-    const states = (stateRows as any[]).map((s) => ({ path: `/video-chat/${s.slug}`, updatedAt: s.updatedAt }));
-    const start = page * SITEMAP_PAGE;
-    const fromStates = states.slice(start, start + SITEMAP_PAGE);
-    const cityOffset = Math.max(0, start - states.length);
-    const cityLimit = SITEMAP_PAGE - fromStates.length;
-    const cityRows = cityLimit > 0 ? await this.dataSource.query(
-      `SELECT c.slug, s.slug AS stateSlug, c.updatedAt FROM location_cities c
-       JOIN location_states s ON s.id = c.stateId AND s.isActive = 1
-       WHERE c.isActive = 1 ORDER BY c.id LIMIT ? OFFSET ?`, [cityLimit, cityOffset]) : [];
+    const offset = page * SITEMAP_PAGE;
+    const rows = kind === 'states'
+      ? await this.dataSource.query('SELECT slug, updatedAt FROM location_states WHERE isActive = 1 ORDER BY id LIMIT ? OFFSET ?', [SITEMAP_PAGE, offset])
+      : await this.dataSource.query(
+        `SELECT c.slug, s.slug AS stateSlug, c.updatedAt FROM location_cities c
+         JOIN location_states s ON s.id = c.stateId AND s.isActive = 1
+         WHERE c.isActive = 1 ORDER BY c.id LIMIT ? OFFSET ?`, [SITEMAP_PAGE, offset]);
     return {
-      urls: [
-        ...fromStates,
-        ...(cityRows as any[]).map((c) => ({ path: `/video-chat/${c.stateSlug}/${c.slug}`, updatedAt: c.updatedAt })),
-      ],
+      urls: (rows as any[]).map((row) => ({
+        path: kind === 'states' ? `/video-chat/${row.slug}` : `/video-chat/${row.stateSlug}/${row.slug}`,
+        updatedAt: row.updatedAt,
+      })),
     };
   }
 

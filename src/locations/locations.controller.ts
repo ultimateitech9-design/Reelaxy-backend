@@ -12,8 +12,8 @@ export class LocationsController {
   @Get('top-cities') topCities(@Query('limit') limit?: string) { return this.locations.topCities(Number(limit) || 24); }
   @Get('search') search(@Query('q') q?: string) { return this.locations.search(String(q || '')); }
   @Get('resolve') resolve(@Query('kind') kind?: string, @Query('slug') slug?: string) { return this.locations.resolveLegacy(String(kind || ''), String(slug || '')); }
-  @Get('sitemap') sitemapInfo() { return this.locations.sitemapInfo(); }
-  @Get('sitemap/:page') sitemapPage(@Param('page', ParseIntPipe) page: number) { return this.locations.sitemapPage(page); }
+  @Get('sitemap/:kind') sitemapInfo(@Param('kind') kind: string) { return this.locations.sitemapInfo(kind); }
+  @Get('sitemap/:kind/:page') sitemapPage(@Param('kind') kind: string, @Param('page', ParseIntPipe) page: number) { return this.locations.sitemapPage(kind, page); }
   @Get('page/:state') state(@Param('state') state: string) { return this.locations.statePage(state); }
   @Get('page/:state/:city') city(@Param('state') state: string, @Param('city') city: string, @Query('page') page?: string) {
     return this.locations.cityPage(state, city, Number(page) || 1);
