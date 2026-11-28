@@ -1,3 +1,5 @@
+import { LocationsModule } from './locations/locations.module';
+import { BlogModule } from './blog/blog.module';
 import { ReferralsModule } from './referrals/referrals.module';
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
@@ -30,6 +32,8 @@ dotenv.config();
 
 @Module({
   imports: [
+    LocationsModule,
+    BlogModule,
     ReferralsModule,
     TypeOrmModule.forRoot({
       type: 'mysql',

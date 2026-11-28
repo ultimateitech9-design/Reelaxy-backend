@@ -1,3 +1,6 @@
+import { LocationCity, LocationImportJob, LocationLocality, LocationState } from './locations/location.entity';
+import { BlogPostStat } from './blog/blog-stat.entity';
+import { BlogPostLike } from './blog/blog-like.entity';
 import 'reflect-metadata';
 import { DataSource } from 'typeorm';
 import * as dotenv from 'dotenv';
@@ -57,6 +60,12 @@ export default new DataSource({
     UserEmailChallenge,
     Coordinator,
     CoordinatorEmailChallenge,
+    BlogPostStat,
+    BlogPostLike,
+    LocationState,
+    LocationCity,
+    LocationLocality,
+    LocationImportJob,
   ],
   migrations: [__dirname + '/migrations/*{.ts,.js}'],
   synchronize: false,

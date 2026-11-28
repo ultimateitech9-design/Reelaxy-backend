@@ -66,6 +66,8 @@ export class StaffActivityInterceptor implements NestInterceptor {
 
   private async write(actor: StaffActor, method: string, path: string, body: any, error: any) {
     if (path.startsWith('/auth/') || path === '/api/health') return;
+    // A location CSV upload sends hundreds of row chunks; the start and finish are logged instead.
+    if (/\/locations\/imports\/\d+\/rows$/.test(path)) return;
     const segments = path.split('/').filter(Boolean).filter((s) => !['api', 'admin', 'super-admin'].includes(s));
     const isId = (s: string) => /^[0-9a-f-]{8,}$/i.test(s) || /^\d+$/.test(s);
     const words = segments.filter((s) => !isId(s));
