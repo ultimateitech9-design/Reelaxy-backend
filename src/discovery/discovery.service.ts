@@ -77,12 +77,25 @@ export class DiscoveryService {
     private readonly searchService: SearchService,
   ) {}
 
-  /** Languages members (women) have entered, most common first. No built-in list: only real data. */
+  /**
+   * Who a member sees in Discover: women see men, everyone else (men, guests,
+   * others) sees women.
+   */
+  private async discoverGendersFor(currentUserId: string, knownGender?: string | null) {
+    const gender = knownGender !== undefined
+      ? knownGender
+      : (await this.userRepo.findOne({ where: { id: currentUserId }, select: ['id', 'gender'] }))?.gender;
+    return canonicalGender(gender) === 'female' ? GENDER_ALIASES.male : GENDER_ALIASES.female;
+  }
+
+  /** Languages entered by the people this member can discover, most common first. Only real data. */
   async languageOptions(currentUserId: string) {
+    const genders = await this.discoverGendersFor(currentUserId);
     const rows = await this.userRepo.createQueryBuilder('user')
       .select('user.spokenLanguages', 'langs')
       .where("user.role = 'user' AND user.status = 'active' AND user.id <> :me", { me: currentUserId })
-      .andWhere('LOWER(TRIM(user.gender)) IN (:...genders)', { genders: GENDER_ALIASES.female })
+      .andWhere('LOWER(TRIM(user.gender)) IN (:...genders)', { genders })
+      .andWhere('user.isGuest = 0')
       .andWhere('user.spokenLanguages IS NOT NULL')
       .getRawMany();
     const counts = new Map<string, number>();
@@ -93,13 +106,15 @@ export class DiscoveryService {
     return { languages: [...counts.entries()].map(([name, count]) => ({ name, count })).sort((a, b) => b.count - a.count || a.name.localeCompare(b.name)) };
   }
 
-  /** Professions present among discoverable members (women), most common first — for the Discover filter. */
+  /** Professions among the people this member can discover, most common first — for the Discover filter. */
   async professionOptions(currentUserId: string) {
+    const genders = await this.discoverGendersFor(currentUserId);
     const rows = await this.userRepo.createQueryBuilder('user')
       .select('TRIM(user.profession)', 'profession')
       .addSelect('COUNT(*)', 'count')
       .where("user.role = 'user' AND user.status = 'active' AND user.id <> :me", { me: currentUserId })
-      .andWhere('LOWER(TRIM(user.gender)) IN (:...genders)', { genders: GENDER_ALIASES.female })
+      .andWhere('LOWER(TRIM(user.gender)) IN (:...genders)', { genders })
+      .andWhere('user.isGuest = 0')
       .andWhere("user.profession IS NOT NULL AND TRIM(user.profession) <> ''")
       .groupBy('LOWER(TRIM(user.profession))')
       .addGroupBy('TRIM(user.profession)')
@@ -198,9 +213,9 @@ export class DiscoveryService {
     const currentGender = canonicalGender(currentUser?.gender);
     const rawRequestedGender = String(filters.interestedIn || 'everyone').trim().toLowerCase();
     const requestedGender = rawRequestedGender === 'everyone' ? 'everyone' : canonicalGender(rawRequestedGender);
-    // Reelaxy Discover shows women only (no gender filter in the app).
-    void requestedGender; void currentGender;
-    const genderGroups = [GENDER_ALIASES.female];
+    // Discover shows women to men and guests, and men to women (no gender filter in the app).
+    void requestedGender;
+    const genderGroups = [currentGender === 'female' ? GENDER_ALIASES.male : GENDER_ALIASES.female];
     const visibleGenders = [...new Set(genderGroups.flat())];
     const genderRankParts = genderGroups.map((_, index) =>
       'WHEN LOWER(TRIM(user.gender)) IN (:...genderRank' + index + ') THEN ' + index,
